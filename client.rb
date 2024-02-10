@@ -155,7 +155,7 @@ class EventLoop
 end
 
 ################################################################################
-# IRC client wrapper. Strict interface for sending and receiving messages
+# Models
 
 class Message
   def initialize(prefix, command, params = [], is_emote = false, tags = {})
@@ -277,6 +277,55 @@ class Message
     "#{nick} :: #{@command} :: #{@params.join(" ")}"
   end
 end
+
+module Color
+  module_function
+
+  # Minimal matching of IRC colors to 16 terminal colors
+  def foreground(code)
+    case code
+    when "1", "01" # Black
+      return "30"
+    when "2", "02" # Blue
+      return "34"
+    when "3", "03" # Green
+      return "32"
+    when "4", "04" # Red
+      return "31"
+    when "5", "05" # Brown
+      return "31"
+    when "6", "06" # Magenta
+      return "35"
+    when "7", "07" # Orange
+      return "91"
+    when "8", "08" # Yellow
+      return "33"
+    when "9", "09" # Light green
+      return "92"
+    when "10"      # Cyan
+      return "36"
+    when "11"      # Light cyan
+      return "96"
+    when "12"      # Light blue
+      return "94"
+    when "13"      # Pink
+      return "95"
+    when "14"      # Grey
+      return "90"
+    when "15"      # Light grey
+      return "97"
+    when "99"      # Default
+      return "0"
+    end
+  end
+
+  def esc(code)
+    return "\033[" + Color::foreground(code) + "m"
+  end
+end
+
+################################################################################
+# IRC client wrapper. Strict interface for sending and receiving messages
 
 class Client
   def initialize(host, port, user, pass)
@@ -419,16 +468,14 @@ class InputHandler
           when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", "?"
             # Skip
           when "A"
-            # Arrow up.
-            if on_control != nil then
-              on_control(:ARROW_UP)
-            end
+            on_control(:ARROW_UP) if on_control != nil
           when "B"
-            # Arrow down.
-            if on_control != nil then
-              on_control(:ARROW_DOWN)
-            end
-          when "C", "D", "E", "F", "G", "H", "J", "K", "S", "T"
+            on_control(:ARROW_DOWN) if on_control != nil
+          when "C"
+            on_control(:ARROW_RIGHT) if on_control != nil
+          when "D" 
+            on_control(:ARROW_LEFT) if on_control != nil
+          when "E", "F", "G", "H", "J", "K", "S", "T"
             @escape = false # Sequence end
           when "f", "m", "i", "n", "h", "l", "s", "u"
             @escape = false # Sequence end
@@ -601,6 +648,7 @@ class App
       str = m[0].to_s
         .gsub(/\001(.+?)\001/, "\033[31m\\1\033[0m")
         .gsub(/\002(.+?)\002/, "\033[1m\\1\033[0m")
+        .gsub /\003([0-9]?[0-9])(.+?)\003/ do "#{Color::esc($1)}#{$2}\033[0m" end
 
       if (y - m[1] > 1) then
         print("\033[#{y - m[1]};1H#{str}\033[0m\033[0K")
@@ -675,7 +723,7 @@ end
 
 # Setup - enable raw mode
 stty_orig = `stty -g`
-%x{stty raw -echo}
+`stty raw -echo`
 
 # Setup - app event loop
 client = Client.new("irc.rizon.net", 6667, "aint", nil)
