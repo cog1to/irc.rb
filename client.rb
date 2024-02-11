@@ -281,7 +281,7 @@ end
 module Color
   module_function
 
-  # Minimal matching of IRC colors to 16 terminal colors
+  # Matching of IRC colors to 16 terminal colors
   def foreground(code)
     case code
     when "1", "01" # Black
@@ -424,7 +424,7 @@ class Client
     if @state != :closed then
       puts "#{err.class}: #{err}"
     end
-    # TODO
+      # TODO: Error handling
   end
 end
 
@@ -434,6 +434,7 @@ class InputHandler
     @client = client
     @buffer = ""
     @escape = false
+    @escape_buf = ""
 
     # Add input listener
     ev.add(STDIN, lambda {
@@ -460,27 +461,49 @@ class InputHandler
 
         if @escape then
           case char
-          when 51.chr
-            # Delete code
-            @escape = false
-            print "\b \b"
-            @buffer = @buffer[0...-1]
-          when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", "?"
-            # Skip
+          when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", "?", "["
+            @escape_buf << char
           when "A"
-            on_control(:ARROW_UP) if on_control != nil
+            @on_control.call(:ARROW_UP) if @on_control != nil
+            @escape_buf = ""
+            @escape = false
           when "B"
-            on_control(:ARROW_DOWN) if on_control != nil
+            @on_control.call(:ARROW_DOWN) if @on_control != nil
+            @escape_buf = ""
+            @escape = false
           when "C"
-            on_control(:ARROW_RIGHT) if on_control != nil
-          when "D" 
-            on_control(:ARROW_LEFT) if on_control != nil
+            @escape_buf = ""
+            @escape = false
+            on_control.call(:ARROW_RIGHT) if @on_control != nil
+          when "D"
+            @escape_buf = ""
+            @escape = false
+            @on_control.call(:ARROW_LEFT) if @on_control != nil
           when "E", "F", "G", "H", "J", "K", "S", "T"
-            @escape = false # Sequence end
+            @escape = false
+            @escape_buf = ""
           when "f", "m", "i", "n", "h", "l", "s", "u"
-            @escape = false # Sequence end
+            @escape = false
+            @escape_buf = ""
+          when "~"
+            @escape_buf << char
+            @escape = false
+
+            # Known sequences:
+            if @escape_buf == "[5~" then
+              @on_control.call(:PAGE_UP) if @on_control != nil
+            elsif @escape_buf == "[6~" then
+              @on_control.call(:PAGE_DOWN) if @on_control != nil
+            elsif @escape_buf == "[3~"
+              # Delete code
+              print "\b \b"
+              @buffer = @buffer[0...-1]
+            end
+
+            @escape_buf = ""
           else
-            @escape = false # Invalid escape sequence
+            @escape = false # Unknown or invalid escape sequence
+            @escape_buf = ""
           end
         else
           case char
@@ -511,6 +534,10 @@ class InputHandler
         break
       end
     end
+  end
+
+  def buffer=(value)
+    @buffer = value
   end
 end
 
@@ -703,9 +730,13 @@ class App
     @input.on_control = lambda { |x|
       case x
       when :ARROW_UP
-        # TODO: Scrollback support
+        # TODO: Command history
       when :ARROW_DOWN
-        # TODO: Scrollback support
+        # TODO: Command history
+      when :PAGE_UP
+        # TODO: Scroll back
+      when :PAGE_DOWN
+        # TODO: Scroll forward
       end
 
       redraw
@@ -726,7 +757,7 @@ stty_orig = `stty -g`
 `stty raw -echo`
 
 # Setup - app event loop
-client = Client.new("irc.rizon.net", 6667, "aint", nil)
+client = Client.new("irc.rizon.net", 6667, "aint1", nil)
 app = App.new(client)
 app.run()
 
