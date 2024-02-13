@@ -666,9 +666,20 @@ class App
 		end
 	end
 
+	def layout_buffer
+		if @active_room == nil then
+			return
+		end
+		if @size == nil then
+			return
+		end
+
+		@buffer.clear
+		@active_room.messages.each do |m| update_buffer(m) end
+	end
+
 	def redraw
 		if @dirty then
-			clear
 			draw_tabs
 			draw_room
 			draw_input
@@ -750,6 +761,8 @@ class App
 			size = (`stty size`).split(" ").map { |x| Integer(x) }
 			@size = { :lines => size[0], :cols => size[1] }
 			@dirty = true
+			clear
+			layout_buffer
 			redraw
 		end
 
