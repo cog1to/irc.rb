@@ -6,10 +6,78 @@ require "io/console"
 ###############################################################################
 # Settings
 
+Switch = Struct.new(:on, :off) do end
+
 SETTINGS = {
 	:buffer_size => 1000,
-	:history_size => 20
+	:history_size => 20,
+	:formatting => {
+		"\002" => Switch.new("\033[1m", "\033[22m"), # Bold
+		"\035" => Switch.new("\033[3m", "\033[23m"), # Italic
+		"\037" => Switch.new("\033[4m", "\033[24m"), # Underline
+		"\036" => Switch.new("\033[9m", "\033[29m"), # Strikethrough
+		"\021" => Switch.new("", "")	# Monospace (not supported)
+	},
+	:styles => {
+		:time => "\033[90m",
+		:nick => "\033[90m\033[1m",
+		:ctcp => "\033[33m",
+		:action => "\033[34m",
+		:dcc => "\033[32m",
+		:join => "\033[35m",
+		:part => "\033[35m",
+	}
 }
+
+module Color
+	module_function
+
+	# Matching of IRC colors to 16 terminal colors
+	def foreground(code)
+		case code
+		when "1", "01" # Black
+			return "30"
+		when "2", "02" # Blue
+			return "34"
+		when "3", "03" # Green
+			return "32"
+		when "4", "04" # Red
+			return "31"
+		when "5", "05" # Brown
+			return "31"
+		when "6", "06" # Magenta
+			return "35"
+		when "7", "07" # Orange
+			return "91"
+		when "8", "08" # Yellow
+			return "33"
+		when "9", "09" # Light green
+			return "92"
+		when "10"			 # Cyan
+			return "36"
+		when "11"			 # Light cyan
+			return "96"
+		when "12"			 # Light blue
+			return "94"
+		when "13"			 # Pink
+			return "95"
+		when "14"			 # Grey
+			return "90"
+		when "15"			 # Light grey
+			return "97"
+		when "99"			 # Default
+			return "0"
+		end
+	end
+
+	def term(code)
+		return Color::foreground(code)
+	end
+
+	def esc(code)
+		return "\033[" + Color::foreground(code) + "m"
+	end
+end
 
 ###############################################################################
 # Basic IRC socket wrapper. Parses incoming messages, sends out outgoing
@@ -166,21 +234,23 @@ end
 # Models
 
 class Message
-	def initialize(prefix, command, params = [], is_emote = false, tags = {})
+	def initialize(prefix, command, params = [], type = :message, tags = {}, time)
 		@prefix = prefix
 		@command = command
 		@params = params
-		@is_emote = is_emote
+		@type = type
 		@tags = tags
+		@time = time
 	end
 
 	def self.from_string(msg)
 		tmp = msg.dup
-		is_emote = false
+		type = :message
 		prefix = ""
 		command = ""
 		params = []
 		tags = {}
+		time = Time.now
 
 		# IRC message format: [@tags] [:prefix] command [params] [:last_param]
 		# For emotes, message is usually wrapped in ^A control bytes.
@@ -204,13 +274,6 @@ class Message
 			tmp[/:[^ ]+ /] = ""
 		end
 
-		# Check for emotes. Emotes are DCC protocl extension, they have a special
-		# format of "^AACTION action text^A".
-		if tmp[0] == "\001" && tmp[-1] == "\001" && tmp[/\AACTION/] then
-			tmp = tmp[1, tmp.length - 2]
-			return Message.new(nil, "ACTION", tmp, true)
-		end
-
 		# Get command. Command is non-optional.
 		if tmp.index(" ") then
 			command = tmp[/\A[^ ]+/]
@@ -228,14 +291,30 @@ class Message
 
 		# Get last param.
 		if tmp.length > 0 then
+			last_param = ""
 			if tmp[0] == ":" then
-				params << tmp[1..-1]
+				last_param = tmp[1..-1]
 			else
-				params << tmp
+				last_param = tmp
 			end
+
+			# Special case for handling "emotes" and CTCP protocol.
+			if last_param[0] == "\001" && last_param[-1] == "\001" then
+				last_param = last_param[1...-1]
+				if last_param[/\AACTION /] then
+					type = :action
+					last_param = last_param[7..-1]
+				elsif last_param[/\ADCC /] then
+					type = :dcc
+				else
+					type = :ctcp
+				end
+			end
+
+			params << last_param
 		end
 
-		return Message.new(prefix, command, params, is_emote)
+		return Message.new(prefix, command, params, type, tags, time)
 	end
 
 	# Getters
@@ -252,8 +331,8 @@ class Message
 		@params
 	end
 
-	def is_emote?
-		@is_emote
+	def type
+		@type
 	end
 
 	def tags
@@ -273,76 +352,125 @@ class Message
 	end
 
 	def format(cols)
-		prefix_length = nick.length + 1
-		line_length = cols - prefix_length
-		visible_text = text
-
-		# TODO: calculate text length without formatting codes. This logic counts
-		# stuff like bold/italic/color codes as single byte/char, thus resulting
-		# string gets shorter than screen width.
-		return (0...visible_text.length).step(line_length).map { |x|
-			(x == 0 ? "\033[1m#{nick}\033[0m " : (" " * prefix_length)) +
-				visible_text[x...(x + line_length)] +
-				(" " * [0, (x + line_length) - text.length].max)
-		}
+		case @command
+		when "PRIVMSG"
+			case @type
+			when :message
+				return format_internal(cols, @params[1..-1].join(" "), nil)
+			when :ctcp
+				return format_internal(cols, "sent CTCP #{params[1..-1].join(" ")} request", SETTINGS[:styles][:ctcp])
+			when :action
+				return format_internal(cols, params[-1], SETTINGS[:styles][:action])
+			end
+		when "JOIN"
+			return format_internal(cols, "joined #{params[-1]}", SETTINGS[:styles][:join])
+		when "PART"
+			return format_internal(cols, "left #{params[-1]}", SETTINGS[:styles][:part])
+		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
+			return format_internal(cols, @params[1..-1].join(" "), nil)
+		else
+			return format_internal(cols, @command + " " + @params.join(" "), nil)
+		end
 	end
 
 	private
-	def text
-		case @command
-		when "NOTICE", "PRIVMSG", "001", "002", "003", "004", "375", "372", "376"
-			return @params[1..-1].join(" ")
-		else
-			return @params.join(" ")
+
+	def format_internal(cols, text, color)
+		prefix_length = 6
+		line_length = cols - prefix_length
+		visible_text = text
+
+		time = "%02d:%02d" % [@time.hour, @time.min]
+
+		time_style = color ? "#{color}" : SETTINGS[:styles][:time]
+		nick_style = color ? "#{color}\033[1m" : SETTINGS[:styles][:nick]
+
+		idx, count = 0, 0, 0
+		line = "", lines = [], escape = "", format = []
+		while idx <= visible_text.length do
+			if (idx == 0 && count == 0) then
+				line = "#{time_style}#{time}\033[0m #{nick_style}#{nick}\033[0m #{color}"
+				count += time.length + nick.length + 2
+			elsif (count == 0) then
+				line = " " * prefix_length
+				count += prefix_length
+
+				# If we got line break while in formatted text, repeat the format.
+				if format.length > 0 then
+					format.each do |x|
+						if x["\003"] then
+							line << "\033[#{Color::term(x[1..-1])}m"
+						else
+							line << SETTINGS[:formatting][x].on
+						end
+					end
+				end
+			end
+
+			if idx == visible_text.length then
+				lines << line + "\033[0m"
+				break
+			end
+
+			# Skip formatting symbols, but apply terminal styles for them
+			if (visible_text[idx] == "\003") then
+				if format.any?{ |s| s["\003"] } then
+					index = format.index { |s| s["\003"] }
+					format.delete_at(index)
+					line << "\033[39;49m"
+					idx = idx + 1
+				else
+					escape, idx = "\003", idx + 1
+				end
+				next
+			end
+
+			if escape.length > 0 then
+				if "0123456789"[visible_text[idx]] != nil then
+					escape += visible_text[idx]
+					if escape.length == 3 then
+						format << escape
+						line << "\033[#{Color::term(escape[1..-1])}m"
+						escape = ""
+					end
+					idx = idx + 1
+					next
+				else
+					format << escape
+					line << "\033[#{Color::term(escape[1..-1])}m"
+					escape = ""
+				end
+			end
+
+			if (visible_text[idx] == "\002") then
+				if format.any? { |s| s == visible_text[idx] } then
+					format -= [visible_text[idx]]
+					line += SETTINGS[:formatting][visible_text[idx]].off
+				else
+					format << visible_text[idx]
+					line += SETTINGS[:formatting][visible_text[idx]].on
+				end
+				idx += 1
+				next
+			end
+
+			# Add symbol
+			line << visible_text[idx]
+			idx += 1;
+			count += 1;
+
+			# Break the text if we got to the end of the line.
+			if (count >= cols) then
+				lines << line
+				start = idx;
+				count = 0;
+			end
 		end
+
+		return lines
 	end
 end
 
-module Color
-	module_function
-
-	# Matching of IRC colors to 16 terminal colors
-	def foreground(code)
-		case code
-		when "1", "01" # Black
-			return "30"
-		when "2", "02" # Blue
-			return "34"
-		when "3", "03" # Green
-			return "32"
-		when "4", "04" # Red
-			return "31"
-		when "5", "05" # Brown
-			return "31"
-		when "6", "06" # Magenta
-			return "35"
-		when "7", "07" # Orange
-			return "91"
-		when "8", "08" # Yellow
-			return "33"
-		when "9", "09" # Light green
-			return "92"
-		when "10"			 # Cyan
-			return "36"
-		when "11"			 # Light cyan
-			return "96"
-		when "12"			 # Light blue
-			return "94"
-		when "13"			 # Pink
-			return "95"
-		when "14"			 # Grey
-			return "90"
-		when "15"			 # Light grey
-			return "97"
-		when "99"			 # Default
-			return "0"
-		end
-	end
-
-	def esc(code)
-		return "\033[" + Color::foreground(code) + "m"
-	end
-end
 
 ################################################################################
 # IRC client wrapper. Strict interface for sending and receiving messages
@@ -652,11 +780,7 @@ class App
 			return
 		end
 
-		lines = msg.format(@size[:cols]).map { |x|
-			x.gsub(/\001(.+?)\001/, "\033[31m\\1\033[0m")
-				.gsub(/\002(.+?)\002/, "\033[1m\\1\033[0m")
-				.gsub /\003([0-9]?[0-9])(.+?)\003/ do "#{Color::esc($1)}#{$2}\033[0m" end
-		}
+		lines = msg.format(@size[:cols]).map { |x| x }
 
 		@buffer = @buffer + lines
 		if @buffer.length > SETTINGS[:buffer_size] then
