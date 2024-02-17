@@ -7,6 +7,7 @@ require "io/console"
 # Settings
 
 Switch = Struct.new(:on, :off) do end
+Style = Struct.new(:time, :nick, :text)
 
 SETTINGS = {
 	:buffer_size => 1000,
@@ -19,13 +20,12 @@ SETTINGS = {
 		"\021" => Switch.new("", "")	# Monospace (not supported)
 	},
 	:styles => {
-		:time => "\033[90m",
-		:nick => "\033[90m\033[1m",
-		:ctcp => "\033[33m",
-		:action => "\033[34m",
-		:dcc => "\033[32m",
-		:join => "\033[35m",
-		:part => "\033[35m",
+		:message => Style.new("\033[90m", "\033[90m\033[1m", nil),
+		:ctcp		 => Style.new("\033[33m", "\033[33m\033[1m", "\033[33m"),
+		:dcc		 => Style.new("\033[32m", "\033[32m\033[1m", "\033[32m"),
+		:action  => Style.new("\033[90m", "\033[34m\033[1m", "\033[34m"),
+		:join		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:part		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m")
 	}
 }
 
@@ -356,43 +356,44 @@ class Message
 		when "PRIVMSG"
 			case @type
 			when :message
-				return format_internal(cols, @params[1..-1].join(" "), nil)
+				return format_internal(cols, @params[1..-1].join(" "))
 			when :ctcp
 				return format_internal(cols, "sent CTCP #{params[1..-1].join(" ")} request", SETTINGS[:styles][:ctcp])
 			when :action
 				return format_internal(cols, params[-1], SETTINGS[:styles][:action])
 			end
 		when "JOIN"
-			return format_internal(cols, "joined #{params[-1]}", SETTINGS[:styles][:join])
+			return format_internal(cols, "has joined #{params[-1]}", SETTINGS[:styles][:join])
 		when "PART"
-			return format_internal(cols, "left #{params[-1]}", SETTINGS[:styles][:part])
+			return format_internal(cols, "has left #{params[-1]}", SETTINGS[:styles][:part])
 		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
-			return format_internal(cols, @params[1..-1].join(" "), nil)
+			return format_internal(cols, @params[1..-1].join(" "))
 		else
-			return format_internal(cols, @command + " " + @params.join(" "), nil)
+			return format_internal(cols, @command + " " + @params.join(" "))
 		end
 	end
 
 	private
 
-	def format_internal(cols, text, color)
+	def format_internal(cols, text, style = SETTINGS[:styles][:message])
 		prefix_length = 6
 		line_length = cols - prefix_length
 		visible_text = text
 
 		time = "%02d:%02d" % [@time.hour, @time.min]
 
-		time_style = color ? "#{color}" : SETTINGS[:styles][:time]
-		nick_style = color ? "#{color}\033[1m" : SETTINGS[:styles][:nick]
+		time_style = style.time
+		nick_style = style.nick
+		text_style = style.text ? style.text : ""
 
 		idx, count = 0, 0, 0
 		line = "", lines = [], escape = "", format = []
 		while idx <= visible_text.length do
 			if (idx == 0 && count == 0) then
-				line = "#{time_style}#{time}\033[0m #{nick_style}#{nick}\033[0m #{color}"
+				line = "#{time_style}#{time}\033[0m #{nick_style}#{nick}\033[0m #{text_style}"
 				count += time.length + nick.length + 2
 			elsif (count == 0) then
-				line = " " * prefix_length
+				line = " " * prefix_length + text_style
 				count += prefix_length
 
 				# If we got line break while in formatted text, repeat the format.
@@ -417,7 +418,7 @@ class Message
 				if format.any?{ |s| s["\003"] } then
 					index = format.index { |s| s["\003"] }
 					format.delete_at(index)
-					line << "\033[39;49m"
+					line << (text_style != "" ? text_style : "\033[39;49m")
 					idx = idx + 1
 				else
 					escape, idx = "\003", idx + 1
