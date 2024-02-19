@@ -358,7 +358,11 @@ class Message
 			when :message
 				return format_internal(cols, @params[1..-1].join(" "))
 			when :ctcp
-				return format_internal(cols, "sent CTCP #{params[1..-1].join(" ")} request", SETTINGS[:styles][:ctcp])
+				return format_internal(
+					cols,
+					"sent CTCP #{params[1..-1].join(" ")} request",
+					SETTINGS[:styles][:ctcp]
+				)
 			when :action
 				return format_internal(cols, params[-1], SETTINGS[:styles][:action])
 			end
@@ -509,6 +513,10 @@ class Client
 
 	def host
 		return @host
+	end
+
+	def user
+		return @user
 	end
 
 	def connect
@@ -664,6 +672,8 @@ class InputHandler
 					end
 				else
 					case char
+					when "\t"
+						@on_control.call(:TAB) if @on_control != nil
 					when "\r"
 						if @on_submit then
 							# Clear line and send to the server.
@@ -720,6 +730,10 @@ class Room
 		@is_read
 	end
 
+	def is_read=(value)
+		@is_read = value
+	end
+
 	def is_active
 		@is_active
 	end
@@ -730,6 +744,10 @@ class Room
 
 	def title
 		@title
+	end
+
+	def title=(value)
+		@title = value
 	end
 end
 
@@ -744,6 +762,7 @@ class App
 		@offset = 0
 		@history = []
 		@history_offset = 0
+		@first_message = true
 
 		add_signals
 		add_input
@@ -752,9 +771,106 @@ class App
 	def handle_message()
 		while @client.empty? == false do
 			msg = @client.next
-			if @active_room then
-				@active_room.add(msg)
-				update_buffer(msg)
+
+			# TODO handle room messages, i.e. user list, topic, mode, kick
+			if (msg.command == "PRIVMSG" || msg.command == "NOTICE") then
+				if msg.params[0] == nil then
+					abort # Bad format
+				elsif @client.user == msg.params[0] || msg.params[0][0] == "#" || msg.params[0] == "*" then
+					# First message on connect will be from the host.
+					if @first_message then
+						@active_room.title = msg.nick
+						@first_message = false
+						@dirty = true
+					end
+
+					# Room name. Special case for "Global" announcements and "*" messages.
+					name = ""
+					if msg.nick == "Global" then
+						name = @rooms[0].title
+					elsif @client.user == msg.params[0] then
+						name = msg.nick
+					elsif msg.params[0] == "*" then
+						name = @rooms[0].title
+					else
+						name = msg.params[0]
+					end
+
+					# Create room if it doesn't exist, otherwise append the message.
+					room = nil
+					if room = @rooms.find { |x| x.title == name } then
+						room.add(msg)
+					else
+						room = Room.new(name)
+						room.add(msg)
+						@rooms << room
+					end
+
+					if room != @active_room then
+						room.is_read = false
+					else
+						update_buffer(msg)
+					end
+					@dirty = true
+				end
+			elsif (
+				msg.command == "JOIN" ||
+				msg.command == "PART" ||
+				(msg.command == "MODE" && msg.params[0][0] == "#") ||
+				(msg.command == "353" && msg.params[2][0] == "#")
+			) then
+				# TODO: Combine with the logic above.
+				# Room name.
+				name = ""
+				if ["JOIN", "PART"].any? { |x| x == msg.command } then
+					name = msg.params[-1]
+				elsif msg.command == "353" then
+					name = msg.params[2]
+				elsif msg.command == "MODE" then
+					name = msg.params[0]
+				end
+
+				# If we've left the room, delete it from the list.
+				if (msg.command == "PART" && msg.nick == @client.user) then
+					if room = @rooms.find { |x| x.title == name } then
+						if @active_room == room then
+							change_room(@rooms[[@rooms.index(@active_room) - 1, 0].max])
+						end
+						@rooms.delete(room)
+					end
+
+					clear
+					layout_buffer
+					@dirty = true
+				else
+					# Create room if it doesn't exist, otherwise append the message.
+					room = nil
+					if room = @rooms.find { |x| x.title == name } then
+						room.add(msg)
+					else
+						room = Room.new(name)
+						room.add(msg)
+						@dirty = true
+						@rooms << room
+					end
+
+					# Make room active if it's the one we're expecting to join.
+					if @expected_room == name then
+						change_room(room)
+					end
+
+					# If message is in active room, update buffer.
+					if room == @active_room then
+						update_buffer(msg)
+					end
+				end
+			elsif (msg.command == "366") then
+				# Ignore
+			else
+				if @active_room then
+					@active_room.add(msg)
+					update_buffer(msg)
+				end
 			end
 		end
 
@@ -781,7 +897,7 @@ class App
 			return
 		end
 
-		lines = msg.format(@size[:cols]).map { |x| x }
+		lines = msg.format(@size[:cols])
 
 		@buffer = @buffer + lines
 		if @buffer.length > SETTINGS[:buffer_size] then
@@ -827,11 +943,11 @@ class App
 		@rooms.each do |room|
 			room_str = "#{room.title}"
 			if (room == @active_room) then
-				room_str = "*#{room_str}"
+				room_str = "\033[1m#{room_str}\033[22m"
 			end
 			room_str += (room.is_read? ? "-" : "*") + " "
 			print room_str[0, [room_str.length, @size[:cols] - length].min]
-			length += room_str.length
+			length += (room.title.length + 2)
 
 			break if length >= @size[:cols]
 		end
@@ -856,7 +972,7 @@ class App
 			print "\033[#{2 + i};1H"
 			if i < (@buffer.length - @offset) then
 				if ((@buffer.length - @offset) < (@size[:lines] - 2)) then
-					print @buffer[@buffer.length - @offset - i - 1]
+					print @buffer[i]
 				else
 					print @buffer[(@buffer.length - @offset - @size[:lines] + 2) + i]
 				end
@@ -872,6 +988,72 @@ class App
 
 		content = @history_offset < 0 ? @history[@history_offset] : @input.buffer
 		print("\033[#{@size[:lines]};1H#{content}\033[0K")
+	end
+
+	# Sending
+
+	def parse_and_send(text)
+		if text[0] == "/" then
+			if text[/\A\/join /] then
+				channels_and_keys = text.split(" ")[1..-1]
+				# Remember first channel in the list, we'll switch to it on join.
+				if first_channel = channels_and_keys[0].split(",")[0] then
+					@expected_room = first_channel
+				end
+				@client.send("JOIN #{channels_and_keys.join(" ")}")
+			elsif text == "/part" || text == "/q" then
+				if @active_room.title[0] == "#" then
+					@client.send("PART #{@active_room.title}")
+				elsif room = @active_room then
+					# Close and delete current room.
+					if room != @rooms[0] then
+						index = [@rooms.index(@active_room) - 1, 0].max
+						@rooms.delete(room)
+						change_room(@rooms[index])
+						redraw
+					end
+				end
+			elsif text[/\A\/msg /] then
+				# TODO: Private message. Create the channel
+			elsif text[/\A\/me /] then
+				if @active_room == nil then
+					return
+				end
+
+				text[/\A\/me /] = ""
+				message = Message.new(@client.user, "PRIVMSG", [text], :action, {}, Time.now)
+				@client.send("PRIVMSG #{@active_room.title} :\001ACTION #{text}\001")
+
+				@active_room.add(message)
+				update_buffer(message)
+				redraw
+			elsif text == "/quit" then
+				@client.send("QUIT")
+				@client.disconnect()
+				@event_loop.stop()
+			end
+		else
+			if @active_room == nil then
+				return
+			end
+
+			# Echo the message to current channel
+			message = Message.new(
+				@client.user,
+				"PRIVMSG",
+				[@active_room.title, text],
+				:message,
+				{},
+				Time.now
+			)
+			@active_room.add(message)
+			update_buffer(message)
+
+			# Send the message to client.
+			@client.send("PRIVMSG #{@active_room.title} :#{text}")
+
+			redraw
+		end
 	end
 
 	# Signals
@@ -893,6 +1075,7 @@ class App
 
 		# Interrupt
 		Signal.trap("INT") do
+			@client.send("QUIT")
 			@client.disconnect()
 			@event_loop.stop()
 		end
@@ -900,6 +1083,7 @@ class App
 
 	def add_input
 		@input.on_stop = lambda {
+			@client.send("QUIT")
 			@client.disconnect()
 			@event_loop.stop()
 		}
@@ -911,8 +1095,9 @@ class App
 				@history[1, @history.length - 1]
 			end
 			@history_offset = 0
-			# Send the command
-			@client.send(text)
+
+			parse_and_send(text)
+
 			# Redraw the input
 			draw_input
 		}
@@ -944,12 +1129,28 @@ class App
 			when :PAGE_DOWN
 				@offset = [@offset - @size[:lines] / 2, 0].max
 				redraw
+			when :TAB
+				if @active_room != nil && @rooms.length > 0 then
+					index = @rooms.index { |x| x == @active_room }
+					change_room(@rooms[(index + 1) % @rooms.length])
+					redraw
+				end
 			end
 		}
 	end
 
 	def clear
 		print "\033[2J"
+	end
+
+	def change_room(room)
+		@offset = 0
+		@active_room = room
+		@active_room.is_read = true
+
+		clear
+		layout_buffer
+		@dirty = true
 	end
 end
 
