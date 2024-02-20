@@ -20,13 +20,14 @@ SETTINGS = {
 		"\021" => Switch.new("", "")	# Monospace (not supported)
 	},
 	:styles => {
-		:message => Style.new("\033[90m", "\033[90m\033[1m", nil),
+		:message => Style.new("\033[90m", "\033[31m", nil),
 		:ctcp		 => Style.new("\033[33m", "\033[33m\033[1m", "\033[33m"),
 		:dcc		 => Style.new("\033[32m", "\033[32m\033[1m", "\033[32m"),
 		:action  => Style.new("\033[90m", "\033[34m\033[1m", "\033[34m"),
 		:join		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:part		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m")
-	}
+		:part		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
+	},
 }
 
 module Color
@@ -351,12 +352,16 @@ class Message
 		return ""
 	end
 
-	def format(cols)
+	def format(cols, user)
 		case @command
 		when "PRIVMSG"
 			case @type
 			when :message
-				return format_internal(cols, @params[1..-1].join(" "))
+				return format_internal(
+					cols,
+					@params[1..-1].join(" "),
+					user == nick ? SETTINGS[:styles][:self] : SETTINGS[:styles][:message]
+				)
 			when :ctcp
 				return format_internal(
 					cols,
@@ -367,9 +372,17 @@ class Message
 				return format_internal(cols, params[-1], SETTINGS[:styles][:action])
 			end
 		when "JOIN"
-			return format_internal(cols, "has joined #{params[-1]}", SETTINGS[:styles][:join])
+			return format_internal(
+				cols,
+				"has joined #{params[-1]}",
+				SETTINGS[:styles][:join]
+			)
 		when "PART"
-			return format_internal(cols, "has left #{params[-1]}", SETTINGS[:styles][:part])
+			return format_internal(
+				cols,
+				"has left #{params[-1]}",
+				SETTINGS[:styles][:part]
+			)
 		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
 			return format_internal(cols, @params[1..-1].join(" "))
 		else
@@ -897,7 +910,7 @@ class App
 			return
 		end
 
-		lines = msg.format(@size[:cols])
+		lines = msg.format(@size[:cols], @client.user)
 
 		@buffer = @buffer + lines
 		if @buffer.length > SETTINGS[:buffer_size] then
@@ -945,9 +958,9 @@ class App
 			if (room == @active_room) then
 				room_str = "\033[1m#{room_str}\033[22m"
 			end
-			room_str += (room.is_read? ? "-" : "*") + " "
+			room_str += (room.is_read? ? " " : "*") + " "
 			print room_str[0, [room_str.length, @size[:cols] - length].min]
-			length += (room.title.length + 2)
+			length += (room.title.length + 4)
 
 			break if length >= @size[:cols]
 		end
@@ -1014,7 +1027,34 @@ class App
 					end
 				end
 			elsif text[/\A\/msg /] then
-				# TODO: Private message. Create the channel
+				params = text.split(" ", 3)
+				user, message_text = params[1], params[2]
+
+				# Find or create room.
+				room = @rooms.find { |x| x.title == user }
+				if room == nil then
+					room = Room.new(user)
+					@rooms << room
+				end
+
+				if message_text then
+					# Echo message and send to client.
+					message = Message.new(
+						@client.user,
+						"PRIVMSG",
+						[user, message_text],
+						:message,
+						{},
+						Time.now
+					)
+					room.add(message)
+					update_buffer(message)
+					@client.send("PRIVMSG #{user} :#{message_text}")
+				end
+
+				# Update buffer.
+				change_room(room)
+				redraw
 			elsif text[/\A\/me /] then
 				if @active_room == nil then
 					return
