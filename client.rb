@@ -879,6 +879,7 @@ class App
 					# Create room if it doesn't exist, otherwise append the message.
 					room = nil
 					if room = @rooms.find { |x| x.title == name } then
+						room.is_left = false
 						room.add(msg)
 					else
 						room = Room.new(name)
@@ -1040,13 +1041,17 @@ class App
 
 	def parse_and_send(text)
 		if text[0] == "/" then
-			if text[/\A\/join /] then
+			if text == "/join" || text[/\A\/join /] then
 				channels_and_keys = text.split(" ")[1..-1]
-				# Remember first channel in the list, we'll switch to it on join.
-				if first_channel = channels_and_keys[0].split(",")[0] then
-					@expected_room = first_channel
+				if channels_and_keys.length > 0 then
+					# Remember first channel in the list, we'll switch to it on join.
+					if first_channel = channels_and_keys[0].split(",")[0] then
+						@expected_room = first_channel
+					end
+					@client.send("JOIN #{channels_and_keys.join(" ")}")
+				elsif @active_room != nil && @active_room.title[0] == "#" && @active_room.is_left? then
+					@client.send("JOIN #{@active_room.title}")
 				end
-				@client.send("JOIN #{channels_and_keys.join(" ")}")
 			elsif text == "/part" || text == "/q" then
 				if @active_room.is_left? then
 					# If we're already kicked, close the tab.
