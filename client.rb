@@ -6,6 +6,8 @@ require "io/console"
 ###############################################################################
 # Settings
 
+SYSTEM_USER = "SYSTEM"
+
 Switch = Struct.new(:on, :off) do end
 Style = Struct.new(:time, :nick, :text)
 
@@ -26,7 +28,9 @@ SETTINGS = {
 		:action  => Style.new("\033[90m", "\033[34m\033[1m", "\033[34m"),
 		:join		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:part		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
+		:kick		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:system  => Style.new("\033[90m", "\033[0m\033[1m", "\033[1m"),
+		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil)
 	},
 }
 
@@ -383,8 +387,20 @@ class Message
 				"has left #{params[-1]}",
 				SETTINGS[:styles][:part]
 			)
+		when "KICK"
+			return format_internal(
+				cols,
+				"kicked #{params[1]} [#{params[2..-1].join(" ")}]",
+				SETTINGS[:styles][:kick]
+			)
 		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
 			return format_internal(cols, @params[1..-1].join(" "))
+		when "SYSTEM"
+			return format_internal(
+				cols,
+				@params[0..-1].join(" "),
+				SETTINGS[:styles][:system]
+			)
 		else
 			return format_internal(cols, @command + " " + @params.join(" "))
 		end
@@ -728,7 +744,7 @@ class Room
 		@title = title
 		@messages = []
 		@is_read = true
-		@is_active = false
+		@is_left = false
 	end
 
 	def add(message)
@@ -747,8 +763,12 @@ class Room
 		@is_read = value
 	end
 
-	def is_active
-		@is_active
+	def is_left?
+		@is_left
+	end
+
+	def is_left=(value)
+		@is_left = value
 	end
 
 	def messages
@@ -870,15 +890,28 @@ class App
 					# Make room active if it's the one we're expecting to join.
 					if @expected_room == name then
 						change_room(room)
-					end
-
-					# If message is in active room, update buffer.
-					if room == @active_room then
+					elsif room == @active_room then
 						update_buffer(msg)
 					end
 				end
 			elsif (msg.command == "366") then
 				# Ignore
+			elsif (msg.command == "KICK") then
+				channel, user = msg.params[0], msg.params[1]
+
+				if room = @rooms.find { |x| x.title == channel } then
+					room.add(msg)
+					if user == @client.user then
+						room.is_left = true
+					end
+
+					if @active_room != room then
+						room.is_read = false
+						draw_tabs
+					else
+						update_buffer(msg)
+					end
+				end
 			else
 				if @active_room then
 					@active_room.add(msg)
@@ -960,7 +993,7 @@ class App
 			end
 			room_str += (room.is_read? ? " " : "*") + " "
 			print room_str[0, [room_str.length, @size[:cols] - length].min]
-			length += (room.title.length + 4)
+			length += (room.title.length + 2)
 
 			break if length >= @size[:cols]
 		end
@@ -1015,7 +1048,13 @@ class App
 				end
 				@client.send("JOIN #{channels_and_keys.join(" ")}")
 			elsif text == "/part" || text == "/q" then
-				if @active_room.title[0] == "#" then
+				if @active_room.is_left? then
+					# If we're already kicked, close the tab.
+					index = [@rooms.index(@active_room) - 1, 0].max
+					@rooms.delete(@active_room)
+					change_room(@rooms[index])
+					redraw
+				elsif @active_room.title[0] == "#" then
 					@client.send("PART #{@active_room.title}")
 				elsif room = @active_room then
 					# Close and delete current room.
@@ -1077,20 +1116,34 @@ class App
 				return
 			end
 
-			# Echo the message to current channel
-			message = Message.new(
-				@client.user,
-				"PRIVMSG",
-				[@active_room.title, text],
-				:message,
-				{},
-				Time.now
-			)
-			@active_room.add(message)
-			update_buffer(message)
+			if @active_room.is_left? then
+				message = Message.new(
+					SYSTEM_USER,
+					SYSTEM_USER,
+					["You've left this room"],
+					:system,
+					{},
+					Time.now
+				)
 
-			# Send the message to client.
-			@client.send("PRIVMSG #{@active_room.title} :#{text}")
+				@active_room.add(message)
+				update_buffer(message)
+			else
+				# Echo the message to current channel
+				message = Message.new(
+					@client.user,
+					"PRIVMSG",
+					[@active_room.title, text],
+					:message,
+					{},
+					Time.now
+				)
+				@active_room.add(message)
+				update_buffer(message)
+
+				# Send the message to client.
+				@client.send("PRIVMSG #{@active_room.title} :#{text}")
+			end
 
 			redraw
 		end
