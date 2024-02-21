@@ -29,6 +29,7 @@ SETTINGS = {
 		:join		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:part		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:kick		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:ban		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:system  => Style.new("\033[90m", "\033[0m\033[1m", "\033[1m"),
 		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil)
 	},
@@ -378,20 +379,26 @@ class Message
 		when "JOIN"
 			return format_internal(
 				cols,
-				"has joined #{params[-1]}",
+				"has joined \002#{params[-1]}\002",
 				SETTINGS[:styles][:join]
 			)
 		when "PART"
 			return format_internal(
 				cols,
-				"has left #{params[-1]}",
+				"has left \002#{params[-1]}\002",
 				SETTINGS[:styles][:part]
 			)
 		when "KICK"
 			return format_internal(
 				cols,
-				"kicked #{params[1]} [#{params[2..-1].join(" ")}]",
+				"kicked \002#{params[1]}\002 [#{params[2..-1].join(" ")}]",
 				SETTINGS[:styles][:kick]
+			)
+		when "QUIT"
+			return format_internal(
+				cols,
+				"has quit",
+				SETTINGS[:styles][:part]
 			)
 		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
 			return format_internal(cols, @params[1..-1].join(" "))
@@ -520,6 +527,10 @@ class Client
 		@read_fd, @write_fd = IO.pipe
 	end
 
+	def on_close=(callback)
+		@on_close = callback
+	end
+
 	def state
 		return @state
 	end
@@ -574,6 +585,15 @@ class Client
 		@irc.close()
 	end
 
+	def close
+		if @state != :connected then
+			return
+		end
+
+		@state = :closing
+		@irc.send("QUIT")
+	end
+
 	def send(msg)
 		if @state != :connected then
 			return
@@ -585,7 +605,11 @@ class Client
 	def handle_message(msg)
 		parsed = Message.from_string(msg)
 
-		if parsed.command == "PING" then
+		if parsed.command == "ERROR" && state == :closing then
+			disconnect()
+			@on_close.call()
+			return
+		elsif parsed.command == "PING" then
 			# Ping request, just pong back.
 			@irc.send("PONG :#{parsed.params[0]}")
 			return
@@ -789,7 +813,16 @@ class App
 		@client = client
 		@event_loop = EventLoop.new
 		@input = InputHandler.new(@event_loop, client)
+
+		# Add close callback.
+		@client.on_close = lambda {
+			@event_loop.stop()
+		}
+
+		# Add client events.
 		@event_loop.add(client.fd, lambda { handle_message })
+
+		# Initial state
 		@rooms = []
 		@buffer = []
 		@offset = 0
@@ -797,6 +830,7 @@ class App
 		@history_offset = 0
 		@first_message = true
 
+		# Subscribe to events.
 		add_signals
 		add_input
 	end
@@ -809,7 +843,7 @@ class App
 			if (msg.command == "PRIVMSG" || msg.command == "NOTICE") then
 				if msg.params[0] == nil then
 					abort # Bad format
-				elsif @client.user == msg.params[0] || msg.params[0][0] == "#" || msg.params[0] == "*" then
+				else
 					# First message on connect will be from the host.
 					if @first_message then
 						@active_room.title = msg.nick
@@ -912,6 +946,11 @@ class App
 					else
 						update_buffer(msg)
 					end
+				end
+			elsif (msg.command == "QUIT") then
+				if room = @active_room then
+					room.add(msg)
+					update_buffer(msg)
 				end
 			else
 				if @active_room then
@@ -1112,9 +1151,38 @@ class App
 				update_buffer(message)
 				redraw
 			elsif text == "/quit" then
-				@client.send("QUIT")
-				@client.disconnect()
-				@event_loop.stop()
+				@client.close()
+			elsif text[/\A\/kick /] then
+				if @active_room != nil then
+					return
+				end
+
+				_, who, kick_msg = text.split(" ", 3)
+
+				command = "KICK #{@active_room.title} #{who}"
+				if kick_msg != nil then
+					command += " :#{kick_msg}"
+				end
+
+				@client.send(command)
+
+				message = Message.new(
+					@client.user,
+					"KICK",
+					[@active_room.title, who, kick_msg],
+					:message,
+					{},
+					Time.now
+				)
+
+				redraw
+			elsif text[/\A\/mode /] then
+				if @active_room == nil then
+					return
+				end
+
+				_, params = text.split(" ", 2)
+				@client.send("MODE #{@active_room.title} #{params}")
 			end
 		else
 			if @active_room == nil then
@@ -1173,16 +1241,13 @@ class App
 
 		# Interrupt
 		Signal.trap("INT") do
-			@client.send("QUIT")
-			@client.disconnect()
-			@event_loop.stop()
+			@client.close()
 		end
 	end
 
 	def add_input
 		@input.on_stop = lambda {
-			@client.send("QUIT")
-			@client.disconnect()
+			@client.close()
 			@event_loop.stop()
 		}
 
