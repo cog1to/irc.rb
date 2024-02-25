@@ -31,7 +31,9 @@ SETTINGS = {
 		:kick		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:ban		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:system  => Style.new("\033[90m", "\033[0m\033[1m", "\033[1m"),
-		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil)
+		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
+		:mode    => Style.new("\033[90m", "\033[31m", nil),
+		:users    => Style.new("\033[90m", "\033[31m", "\033[32m"),
 	},
 }
 
@@ -156,6 +158,41 @@ class IRC
 
 	def is_open?
 		@socket != nil
+	end
+end
+
+class Signals
+	def initialize()
+		@read_fd, @write_fd = IO.pipe
+		@queue = Queue.new
+	end
+
+	def fd
+		return @read_fd
+	end
+
+	def next
+		if !@queue.empty? then
+			return @queue.pop
+		else
+			return nil
+		end
+	end
+
+	def empty?
+		return @queue.empty?
+	end
+
+	def subscribe()
+		Signal.trap("SIGWINCH") do
+			@queue << :winch
+			@write_fd << "1"
+		end
+
+		Signal.trap("INT") do
+			@queue << :int
+			@write_fd << "1"
+		end
 	end
 end
 
@@ -399,6 +436,18 @@ class Message
 				cols,
 				"has quit",
 				SETTINGS[:styles][:part]
+			)
+		when "MODE"
+			return format_internal(
+				cols,
+				"set mode #{params[1]} for #{params[0]}",
+				SETTINGS[:styles][:mode]
+			)
+		when "353"
+			return format_internal(
+				cols,
+				"Users: #{params[3..-1].join(", ")}",
+				SETTINGS[:styles][:users]
 			)
 		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
 			return format_internal(cols, @params[1..-1].join(" "))
@@ -811,6 +860,7 @@ end
 class App
 	def initialize(client)
 		@client = client
+		@signals = Signals.new()
 		@event_loop = EventLoop.new
 		@input = InputHandler.new(@event_loop, client)
 
@@ -822,6 +872,9 @@ class App
 		# Add client events.
 		@event_loop.add(client.fd, lambda { handle_message })
 
+		# Add signals.
+		@event_loop.add(@signals.fd, lambda { handle_signal })
+
 		# Initial state
 		@rooms = []
 		@buffer = []
@@ -829,15 +882,19 @@ class App
 		@history = []
 		@history_offset = 0
 		@first_message = true
+		size = (`stty size`).split(" ").map { |x| Integer(x) }
+		@size = { :lines => size[0], :cols => size[1] }
 
 		# Subscribe to events.
-		add_signals
 		add_input
+		@signals.subscribe()
 	end
 
 	def handle_message()
 		while @client.empty? == false do
 			msg = @client.next
+
+			STDERR.puts "#{msg.nick} #{msg.command}, #{msg.params}"
 
 			# TODO handle room messages, i.e. user list, topic, mode, kick
 			if (msg.command == "PRIVMSG" || msg.command == "NOTICE") then
@@ -883,8 +940,8 @@ class App
 			elsif (
 				msg.command == "JOIN" ||
 				msg.command == "PART" ||
-				(msg.command == "MODE" && msg.params[0][0] == "#") ||
-				(msg.command == "353" && msg.params[2][0] == "#")
+				msg.command == "MODE" ||
+				msg.command == "353"
 			) then
 				# TODO: Combine with the logic above.
 				# Room name.
@@ -894,7 +951,11 @@ class App
 				elsif msg.command == "353" then
 					name = msg.params[2]
 				elsif msg.command == "MODE" then
-					name = msg.params[0]
+					if (msg.nick == @client.user) then
+						name = @rooms[0].title
+					else
+						name = msg.params[0]
+					end
 				end
 
 				# If we've left the room, delete it from the list.
@@ -1224,26 +1285,25 @@ class App
 
 	# Signals
 
-	def add_signals
-		# Initial size
-		size = (`stty size`).split(" ").map { |x| Integer(x) }
-		@size = { :lines => size[0], :cols => size[1] }
+	def handle_signal
+		while @signals.empty? == false do
+			msg = @signals.next
 
-		# Size change signal
-		Signal.trap("SIGWINCH") do
-			size = (`stty size`).split(" ").map { |x| Integer(x) }
-			@size = { :lines => size[0], :cols => size[1] }
-			@dirty = true
-			clear
-			layout_buffer
-			redraw
-		end
-
-		# Interrupt
-		Signal.trap("INT") do
-			@client.close()
+			case msg
+				when :winch
+					size = (`stty size`).split(" ").map { |x| Integer(x) }
+					@size = { :lines => size[0], :cols => size[1] }
+					@dirty = true
+					clear
+					layout_buffer
+					redraw
+				when :int
+					@client.close()
+			end
 		end
 	end
+
+	# Input
 
 	def add_input
 		@input.on_stop = lambda {
