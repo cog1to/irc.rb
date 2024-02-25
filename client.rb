@@ -449,6 +449,16 @@ class Message
 				"Users: #{params[3..-1].join(", ")}",
 				SETTINGS[:styles][:users]
 			)
+		when "332"
+			return format_internal(
+				cols,
+				"Topic: #{params[2..-1].join(" ")}"
+			)
+		when "333"
+			return format_internal(
+				cols,
+				"Topic in #{params[1]} set by #{params[2]} at #{Time.at(params[3].to_i)}"
+			)
 		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
 			return format_internal(cols, @params[1..-1].join(" "))
 		when "SYSTEM"
@@ -894,8 +904,6 @@ class App
 		while @client.empty? == false do
 			msg = @client.next
 
-			STDERR.puts "#{msg.nick} #{msg.command}, #{msg.params}"
-
 			# TODO handle room messages, i.e. user list, topic, mode, kick
 			if (msg.command == "PRIVMSG" || msg.command == "NOTICE") then
 				if msg.params[0] == nil then
@@ -943,7 +951,6 @@ class App
 				msg.command == "MODE" ||
 				msg.command == "353"
 			) then
-				# TODO: Combine with the logic above.
 				# Room name.
 				name = ""
 				if ["JOIN", "PART"].any? { |x| x == msg.command } then
