@@ -33,7 +33,7 @@ SETTINGS = {
 		:system  => Style.new("\033[90m", "\033[0m\033[1m", "\033[1m"),
 		:self		 => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
 		:mode		 => Style.new("\033[90m", "\033[31m", nil),
-		:users		=> Style.new("\033[90m", "\033[31m", "\033[32m"),
+		:users		=> Style.new("\033[90m", "\033[31m", nil),
 	},
 }
 
@@ -276,14 +276,30 @@ end
 ################################################################################
 # Models
 
+class CTCP
+	def initialize(command, params = nil)
+		@command = command
+		@params = params
+	end
+
+	def command
+		return @command
+	end
+
+	def params
+		return @params
+	end
+end
+
 class Message
-	def initialize(prefix, command, params = [], type = :message, tags = {}, time)
+	def initialize(prefix, command, params = [], type = :message, tags = {}, time, ctcp)
 		@prefix = prefix
 		@command = command
 		@params = params
 		@type = type
 		@tags = tags
 		@time = time
+		@ctcp = ctcp
 	end
 
 	def self.from_string(msg)
@@ -294,6 +310,7 @@ class Message
 		params = []
 		tags = {}
 		time = Time.now
+		ctcp = nil
 
 		# IRC message format: [@tags] [:prefix] command [params] [:last_param]
 		# For emotes, message is usually wrapped in ^A control bytes.
@@ -351,13 +368,15 @@ class Message
 					type = :dcc
 				else
 					type = :ctcp
+					ctcp_params = last_param.split(" ")
+					ctcp = CTCP.new(ctcp_params[0], ctcp_params[1..-1])
 				end
 			end
 
 			params << last_param
 		end
 
-		return Message.new(prefix, command, params, type, tags, time)
+		return Message.new(prefix, command, params, type, tags, time, ctcp)
 	end
 
 	# Getters
@@ -380,6 +399,10 @@ class Message
 
 	def tags
 		@tags
+	end
+
+	def ctcp
+		@ctcp
 	end
 
 	def nick
@@ -407,7 +430,7 @@ class Message
 			when :ctcp
 				return format_internal(
 					cols,
-					"sent CTCP #{params[1..-1].join(" ")} request",
+					"sent 'CTCP #{params[1..-1].join(" ")}' request to \002#{params[0]}\002",
 					SETTINGS[:styles][:ctcp]
 				)
 			when :action
@@ -440,13 +463,13 @@ class Message
 		when "MODE"
 			return format_internal(
 				cols,
-				"set mode #{params[1]} for #{params[0]}",
+				"set mode \002#{params[1]}\002 for \002#{params[0]}\002",
 				SETTINGS[:styles][:mode]
 			)
 		when "353"
 			return format_internal(
 				cols,
-				"Users: #{params[3..-1].join(", ")}",
+				"Users: #{params[-1].split(" ").map{ |u| "\00303#{u}\003" }.join(", ")}",
 				SETTINGS[:styles][:users]
 			)
 		when "332"
@@ -692,11 +715,25 @@ class Client
 
 	def handle_message(msg)
 		parsed = Message.from_string(msg)
+		response = nil
 
 		if parsed.command == "ERROR" && state == :closing then
 			disconnect()
 			@on_close.call()
 			return
+		elsif parsed.type == :ctcp then
+			if parsed.ctcp != nil && parsed.ctcp.command == "VERSION" then
+				response = Message.new(
+					@user,
+					"PRIVMSG",
+					[parsed.nick, "VERSION irc.rb 0.1"],
+					:ctcp,
+					{},
+					Time.now,
+					CTCP.new("VERSION", "irc.rb 0.1")
+				)
+				@irc.send("PRIVMSG #{parsed.nick} \001VERSION irc.rb 0.1\001")
+			end
 		elsif parsed.command == "PING" then
 			# Ping request, just pong back.
 			@irc.send("PONG :#{parsed.params[0]}")
@@ -715,6 +752,7 @@ class Client
 
 		# Add message to queue and signal the event loop
 		@queue << parsed
+		@queue << response if response != nil
 		@write_fd.write("1")
 	end
 
@@ -1189,6 +1227,11 @@ class App
 					@client.send("JOIN #{@active_room.title}")
 				end
 			elsif text == "/part" || text == "/q" then
+				# Can't leave the server room.
+				if @rooms[0] == @active_room then
+					return
+				end
+
 				if @active_room.is_left? then
 					# If we're already kicked, close the tab.
 					index = [@rooms.index(@active_room) - 1, 0].max
@@ -1225,7 +1268,8 @@ class App
 						[user, message_text],
 						:message,
 						{},
-						Time.now
+						Time.now,
+						nil
 					)
 					room.add(message)
 					update_buffer(message)
@@ -1241,7 +1285,7 @@ class App
 				end
 
 				text[/\A\/me /] = ""
-				message = Message.new(@client.user, "PRIVMSG", [text], :action, {}, Time.now)
+				message = Message.new(@client.user, "PRIVMSG", [text], :action, {}, Time.now, nil)
 				@client.send("PRIVMSG #{@active_room.title} :\001ACTION #{text}\001")
 
 				@active_room.add(message)
@@ -1269,7 +1313,8 @@ class App
 					[@active_room.title, who, kick_msg],
 					:message,
 					{},
-					Time.now
+					Time.now,
+					nil
 				)
 
 				redraw
@@ -1293,7 +1338,8 @@ class App
 					["You've left this room"],
 					:system,
 					{},
-					Time.now
+					Time.now,
+					nil
 				)
 
 				@active_room.add(message)
@@ -1306,7 +1352,8 @@ class App
 					[@active_room.title, text],
 					:message,
 					{},
-					Time.now
+					Time.now,
+					nil
 				)
 				@active_room.add(message)
 				update_buffer(message)
