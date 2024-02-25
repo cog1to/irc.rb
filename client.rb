@@ -31,9 +31,9 @@ SETTINGS = {
 		:kick		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:ban		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:system  => Style.new("\033[90m", "\033[0m\033[1m", "\033[1m"),
-		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
-		:mode    => Style.new("\033[90m", "\033[31m", nil),
-		:users    => Style.new("\033[90m", "\033[31m", "\033[32m"),
+		:self		 => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
+		:mode		 => Style.new("\033[90m", "\033[31m", nil),
+		:users		=> Style.new("\033[90m", "\033[31m", "\033[32m"),
 	},
 }
 
@@ -475,20 +475,19 @@ class Message
 	private
 
 	def format_internal(cols, text, style = SETTINGS[:styles][:message])
-		prefix_length = 6
-		line_length = cols - prefix_length
-		visible_text = text
-
 		time = "%02d:%02d" % [@time.hour, @time.min]
+		visible_text = text
+		prefix_length = time.length + 1
 
 		time_style = style.time
 		nick_style = style.nick
 		text_style = style.text ? style.text : ""
 
-		idx, count = 0, 0, 0
-		line = "", lines = [], escape = "", format = []
+		idx, count, start, last_break = 0, 0, 0, 0
+		line = ""; lines = []; escape = ""; format = []
+		is_escape = false
 		while idx <= visible_text.length do
-			if (idx == 0 && count == 0) then
+			if (idx == 0) then
 				line = "#{time_style}#{time}\033[0m #{nick_style}#{nick}\033[0m #{text_style}"
 				count += time.length + nick.length + 2
 			elsif (count == 0) then
@@ -507,63 +506,83 @@ class Message
 				end
 			end
 
-			if idx == visible_text.length then
-				lines << line + "\033[0m"
-				break
-			end
-
-			# Skip formatting symbols, but apply terminal styles for them
-			if (visible_text[idx] == "\003") then
-				if format.any?{ |s| s["\003"] } then
-					index = format.index { |s| s["\003"] }
-					format.delete_at(index)
-					line << (text_style != "" ? text_style : "\033[39;49m")
-					idx = idx + 1
-				else
-					escape, idx = "\003", idx + 1
+			if (count == cols || idx == visible_text.length) then
+				if idx == visible_text.length || last_break == start then
+					last_break = idx
 				end
-				next
-			end
 
-			if escape.length > 0 then
-				if "0123456789"[visible_text[idx]] != nil then
-					escape += visible_text[idx]
-					if escape.length == 3 then
-						format << escape
-						line << "\033[#{Color::term(escape[1..-1])}m"
-						escape = ""
+				# format line from `start` to `last_break`
+				i = start
+				while (i < last_break) do
+					# Skip formatting symbols, but apply terminal styles for them
+					if (visible_text[i] == "\003") then
+						if format.any?{ |s| s["\003"] } then
+							index = format.index { |s| s["\003"] }
+							format.delete_at(index)
+							line << (text_style != "" ? text_style : "\033[39;49m")
+							i = i + 1
+						else
+							escape, i = "\003", i + 1
+						end
+						next
 					end
-					idx = idx + 1
-					next
-				else
-					format << escape
-					line << "\033[#{Color::term(escape[1..-1])}m"
-					escape = ""
-				end
-			end
 
-			if (visible_text[idx] == "\002") then
-				if format.any? { |s| s == visible_text[idx] } then
-					format -= [visible_text[idx]]
-					line += SETTINGS[:formatting][visible_text[idx]].off
-				else
-					format << visible_text[idx]
-					line += SETTINGS[:formatting][visible_text[idx]].on
+					if escape.length > 0 then
+						if "0123456789"[visible_text[i]] != nil then
+							escape += visible_text[i]
+							if escape.length == 3 then
+								format << escape
+								line << "\033[#{Color::term(escape[1..-1])}m"
+								escape = ""
+							end
+							i = i + 1
+							next
+						else
+							format << escape
+							line << "\033[#{Color::term(escape[1..-1])}m"
+							escape = ""
+						end
+					end
+
+					if (visible_text[i] == "\002") then
+						if format.any? { |s| s == visible_text[i] } then
+							format -= [visible_text[i]]
+							line += SETTINGS[:formatting][visible_text[i]].off
+						else
+							format << visible_text[i]
+							line += SETTINGS[:formatting][visible_text[i]].on
+						end
+						i += 1
+						next
+					end
+
+					# Add symbol to the line
+					line << visible_text[i]
+					i += 1
 				end
+
+				# Append formatted line
+				lines << line + "\033[0m"
+				# Advance `start` to `last_break`
+				start = last_break + 1
+				idx, count = start, 0
+			elsif visible_text[idx] == "\003" then
+				if is_escape == false then
+					seq, idx = 0, idx + 1
+					while ("01234567890".index(visible_text[idx]) != nil && seq < 2) do
+						seq, idx = seq + 1, idx + 1
+					end
+					is_escape = true
+				else
+					is_escape, idx = false, idx + 1
+				end
+			elsif ["\002", "\035", "\036", "\037"].index(visible_text[idx]) != nil then
 				idx += 1
-				next
-			end
-
-			# Add symbol
-			line << visible_text[idx]
-			idx += 1;
-			count += 1;
-
-			# Break the text if we got to the end of the line.
-			if (count >= cols) then
-				lines << line
-				start = idx;
-				count = 0;
+			elsif visible_text[idx] == " " then
+				last_break = idx
+				idx, count = idx + 1, count + 1
+			else
+				idx, count = idx + 1, count + 1
 			end
 		end
 
