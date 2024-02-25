@@ -488,9 +488,11 @@ class Message
 		is_escape = false
 		while idx <= visible_text.length do
 			if (idx == 0) then
+				# First line start with time and sender's nickname.
 				line = "#{time_style}#{time}\033[0m #{nick_style}#{nick}\033[0m #{text_style}"
 				count += time.length + nick.length + 2
 			elsif (count == 0) then
+				# Subsequent lines start with padding.
 				line = " " * prefix_length + text_style
 				count += prefix_length
 
@@ -506,15 +508,16 @@ class Message
 				end
 			end
 
+			# If we got to the end of the terminal line, append line to the output.
 			if (count == cols || idx == visible_text.length) then
 				if idx == visible_text.length || last_break == start then
 					last_break = idx
 				end
 
-				# format line from `start` to `last_break`
+				# Format line from `start` to `last_break`.
 				i = start
 				while (i < last_break) do
-					# Skip formatting symbols, but apply terminal styles for them
+					# Convert formatting and color sequences to terminal escape sequences.
 					if (visible_text[i] == "\003") then
 						if format.any?{ |s| s["\003"] } then
 							index = format.index { |s| s["\003"] }
@@ -544,7 +547,7 @@ class Message
 						end
 					end
 
-					if (visible_text[i] == "\002") then
+					if (SETTINGS[:formatting].keys.index(visible_text[i]) != nil) then
 						if format.any? { |s| s == visible_text[i] } then
 							format -= [visible_text[i]]
 							line += SETTINGS[:formatting][visible_text[i]].off
@@ -561,12 +564,16 @@ class Message
 					i += 1
 				end
 
-				# Append formatted line
+				# Append formatted line.
 				lines << line + "\033[0m"
-				# Advance `start` to `last_break`
-				start = last_break + 1
+				# Advance `start` to `last_break`.
+				start = last_break
 				idx, count = start, 0
+
+				# End of message.
+				break if idx == visible_text.length
 			elsif visible_text[idx] == "\003" then
+				# Skip color sequence.
 				if is_escape == false then
 					seq, idx = 0, idx + 1
 					while ("01234567890".index(visible_text[idx]) != nil && seq < 2) do
@@ -577,11 +584,14 @@ class Message
 					is_escape, idx = false, idx + 1
 				end
 			elsif ["\002", "\035", "\036", "\037"].index(visible_text[idx]) != nil then
+				# Skip formatting.
 				idx += 1
 			elsif visible_text[idx] == " " then
-				last_break = idx
+				# Remember as last word-wrap break.
 				idx, count = idx + 1, count + 1
+				last_break = idx
 			else
+				# Normal symbol, just append to the current segment length.
 				idx, count = idx + 1, count + 1
 			end
 		end
