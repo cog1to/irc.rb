@@ -2,6 +2,7 @@
 
 require "socket"
 require "io/console"
+require 'optparse'
 
 ###############################################################################
 # Settings
@@ -23,19 +24,47 @@ SETTINGS = {
 	},
 	:styles => {
 		:message => Style.new("\033[90m", "\033[31m", nil),
-		:ctcp		 => Style.new("\033[33m", "\033[33m\033[1m", "\033[33m"),
-		:dcc		 => Style.new("\033[32m", "\033[32m\033[1m", "\033[32m"),
+		:ctcp    => Style.new("\033[33m", "\033[33m\033[1m", "\033[33m"),
+		:dcc     => Style.new("\033[32m", "\033[32m\033[1m", "\033[32m"),
 		:action  => Style.new("\033[90m", "\033[34m\033[1m", "\033[34m"),
-		:join		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:part		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:kick		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:ban		 => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:join    => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:part    => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:kick    => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
+		:ban     => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
 		:system  => Style.new("\033[90m", "\033[0m\033[1m", "\033[1m"),
-		:self		 => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
-		:mode		 => Style.new("\033[90m", "\033[31m", nil),
-		:users		=> Style.new("\033[90m", "\033[31m", nil),
+		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
+		:mode    => Style.new("\033[90m", "\033[31m", nil),
+		:users   => Style.new("\033[90m", "\033[31m", nil),
 	},
 }
+
+###############################################################################
+# Arguments
+
+options = {
+	:port => 6667,
+	:server => "irc.rizon.net",
+	:user => "aint",
+	:pass => nil
+}
+
+OptionParser.new do |opt|
+	opt.on("-c", "--server SERVER") { |o|
+		options[:server] = o
+	}
+	opt.on("-p", "--port PORT") { |o|
+		options[:port] = o.to_i
+	}
+	opt.on("-u", "--user USER") { |o|
+		options[:user] = o
+	}
+	opt.on("-s", "--pass PASS") { |o|
+		options[:pass] = o
+	}
+end.parse!
+
+###############################################################################
+# Common models
 
 module Color
 	module_function
@@ -599,7 +628,11 @@ class Message
 				# Skip color sequence.
 				if is_escape == false then
 					seq, idx = 0, idx + 1
-					while ("01234567890".index(visible_text[idx]) != nil && seq < 2) do
+					while (
+						idx < visible_text.length &&
+						"01234567890".index(visible_text[idx]) != nil &&
+						seq < 2
+					) do
 						seq, idx = seq + 1, idx + 1
 					end
 					is_escape = true
@@ -760,7 +793,7 @@ class Client
 		if @state != :closed then
 			puts "#{err.class}: #{err}"
 		end
-			# TODO: Error handling
+		# TODO: Error handling
 	end
 end
 
@@ -1481,7 +1514,7 @@ stty_orig = `stty -g`
 `stty raw -echo`
 
 # Setup - app event loop
-client = Client.new("irc.rizon.net", 6667, "aint1", nil)
+client = Client.new(options[:server], options[:port], options[:user], options[:pass])
 app = App.new(client)
 app.run()
 
