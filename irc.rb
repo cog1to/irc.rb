@@ -44,8 +44,6 @@ SETTINGS = {
 options = {
 	:port => 6667,
 	:server => "irc.rizon.net",
-	:user => "aint",
-	:pass => nil
 }
 
 OptionParser.new do |opt|
@@ -62,6 +60,16 @@ OptionParser.new do |opt|
 		options[:pass] = o
 	}
 end.parse!
+
+if options[:user] == nil then
+	puts "User not specified. Either modify the default options or provide a username with '-u'"
+	exit
+end
+
+if options[:port] == nil || options[:port] <= 0 then
+	puts "Bad port number #{options[:port]}"
+	exit
+end
 
 ###############################################################################
 # Common models
