@@ -798,6 +798,11 @@ class InputHandler
 		@buffer = str
 	end
 
+	def size=(size)
+		@size = size
+		print_line
+	end
+
 	def handle_input()
 		while true
 			begin
@@ -840,8 +845,8 @@ class InputHandler
 							@on_control.call(:PAGE_DOWN) if @on_control != nil
 						elsif @escape_buf == "[3~"
 							# Delete code
-							print "\b \b"
 							@buffer = @buffer[0...-1]
+							print_line
 						end
 
 						@escape_buf = ""
@@ -856,7 +861,6 @@ class InputHandler
 					when "\r"
 						if @on_submit then
 							# Clear line and send to the server.
-							print "\033[1K\033[0E"
 							value = @buffer.dup
 							@buffer = ""
 							@on_submit.call(value)
@@ -867,22 +871,27 @@ class InputHandler
 							@on_stop.call()
 						end
 					when 127.chr
-						# Backspace.
-						print "\b \b"
+						# Backspace. Remove last symbol.
 						@buffer = @buffer[0...-1]
 					when 27.chr
 						# Escape sequence detected.
 						@escape = true
 					else
-						# Echo and add to the buffer.
-						print char
 						@buffer += char
 					end
+
+					print_line
 				end
 			rescue
 				break
 			end
 		end
+	end
+
+	def print_line
+		start = [0, @buffer.length - @size[:cols] + 4].max
+		line = @buffer[start..-1]
+		print "\033[0E>> #{line}\033[0K"
 	end
 end
 
@@ -961,6 +970,7 @@ class App
 		@first_message = true
 		size = (`stty size`).split(" ").map { |x| Integer(x) }
 		@size = { :lines => size[0], :cols => size[1] }
+		@input.size = @size
 
 		# Subscribe to events.
 		add_input
@@ -1208,7 +1218,8 @@ class App
 		end
 
 		content = @history_offset < 0 ? @history[@history_offset] : @input.buffer
-		print("\033[#{@size[:lines]};1H#{content}\033[0K")
+		line = content[([0, content.length - @size[:cols] + 4].max)..-1]
+		print("\033[#{@size[:lines]};1H>> #{content}\033[0K")
 	end
 
 	# Sending
@@ -1380,6 +1391,7 @@ class App
 					clear
 					layout_buffer
 					redraw
+					@input.size = @size
 				when :int
 					@client.close()
 			end
