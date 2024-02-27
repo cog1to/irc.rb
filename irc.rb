@@ -9,7 +9,7 @@ require 'optparse'
 
 SYSTEM_USER = "SYSTEM"
 
-Switch = Struct.new(:on, :off) do end
+Switch = Struct.new(:on, :off)
 Style = Struct.new(:time, :nick, :text)
 
 SETTINGS = {
@@ -806,10 +806,8 @@ class Client
 end
 
 class InputHandler
-	def initialize(ev, client)
+	def initialize(ev)
 		@event_loop = ev
-		@client = client
-		@buffer = ""
 		@escape = false
 		@escape_buf = ""
 
@@ -831,17 +829,8 @@ class InputHandler
 		@on_submit = callback
 	end
 
-	def buffer
-		@buffer.dup
-	end
-
-	def buffer=(str)
-		@buffer = str
-	end
-
-	def size=(size)
-		@size = size
-		print_line
+	def on_append=(callback)
+		@on_append = callback
 	end
 
 	def handle_input()
@@ -885,9 +874,7 @@ class InputHandler
 						elsif @escape_buf == "[6~" then
 							@on_control.call(:PAGE_DOWN) if @on_control != nil
 						elsif @escape_buf == "[3~"
-							# Delete code
-							@buffer = @buffer[0...-1]
-							print_line
+							@on_control.call(:DELETE) if @on_control != nil
 						end
 
 						@escape_buf = ""
@@ -902,9 +889,7 @@ class InputHandler
 					when "\r"
 						if @on_submit then
 							# Clear line and send to the server.
-							value = @buffer.dup
-							@buffer = ""
-							@on_submit.call(value)
+							@on_submit.call()
 						end
 					when 3.chr, 26.chr
 						# CTRL-C, CTRL-Z
@@ -912,27 +897,18 @@ class InputHandler
 							@on_stop.call()
 						end
 					when 127.chr
-						# Backspace. Remove last symbol.
-						@buffer = @buffer[0...-1]
+						@on_control.call(:BACKSPACE) if @on_control != nil
 					when 27.chr
 						# Escape sequence detected.
 						@escape = true
 					else
-						@buffer += char
+						@on_append.call(char) if @on_append != nil
 					end
-
-					print_line
 				end
 			rescue
 				break
 			end
 		end
-	end
-
-	def print_line
-		start = [0, @buffer.length - @size[:cols] + 4].max
-		line = @buffer[start..-1]
-		print "\033[0E>> #{line}\033[0K"
 	end
 end
 
@@ -989,7 +965,7 @@ class App
 		@client = client
 		@signals = Signals.new()
 		@event_loop = EventLoop.new
-		@input = InputHandler.new(@event_loop, client)
+		@input = InputHandler.new(@event_loop)
 
 		# Add close callback.
 		@client.on_close = lambda {
@@ -1002,16 +978,18 @@ class App
 		# Add signals.
 		@event_loop.add(@signals.fd, lambda { handle_signal })
 
-		# Initial state
+		# Initial state.
 		@rooms = []
 		@buffer = []
 		@offset = 0
 		@history = []
 		@history_offset = 0
 		@first_message = true
+		@input_buffer = ""
+
+		# Get current size.
 		size = (`stty size`).split(" ").map { |x| Integer(x) }
 		@size = { :lines => size[0], :cols => size[1] }
-		@input.size = @size
 
 		# Subscribe to events.
 		add_input
@@ -1258,7 +1236,7 @@ class App
 			return
 		end
 
-		content = @history_offset < 0 ? @history[@history_offset] : @input.buffer
+		content = @history_offset < 0 ? @history[@history_offset] : @input_buffer
 		line = content[([0, content.length - @size[:cols] + 4].max)..-1]
 		print("\033[#{@size[:lines]};1H>> #{content}\033[0K")
 	end
@@ -1447,14 +1425,16 @@ class App
 			@event_loop.stop()
 		}
 
-		@input.on_submit = lambda { |text|
+		@input.on_submit = lambda {
 			# Reset history offset, append command to history
-			@history << text
+			@history << @input_buffer
 			if @history.length > SETTINGS[:history_size] then
 				@history[1, @history.length - 1]
 			end
 			@history_offset = 0
 
+			# Reset buffer and send
+			text, @input_buffer = @input_buffer, ""
 			parse_and_send(text)
 
 			# Redraw the input
@@ -1466,18 +1446,22 @@ class App
 			when :ARROW_UP
 				@history_offset = [-@history.length, @history_offset - 1].max
 				if @history_offset < 0 then
-					@input.buffer = @history[@history_offset]
+					@input_buffer = @history[@history_offset].dup
 				else
-					@input.buffer = ""
+					@input_buffer = ""
 				end
 				draw_input
 			when :ARROW_DOWN
 				@history_offset = [@history_offset + 1, 0].min
 				if @history_offset < 0 then
-					@input.buffer = @history[@history_offset]
+					@input_buffer = @history[@history_offset].dup
 				else
-					@input.buffer = ""
+					@input_buffer = ""
 				end
+				draw_input
+			when :DELETE, :BACKSPACE
+				@history_offset = 0
+				@input_buffer = @input_buffer[0...-1]
 				draw_input
 			when :PAGE_UP
 				@offset = [
@@ -1495,6 +1479,12 @@ class App
 					redraw
 				end
 			end
+		}
+
+		@input.on_append = lambda { |x|
+			@input_buffer << x
+			@history_offset = 0
+			draw_input
 		}
 	end
 
