@@ -7,34 +7,122 @@ require 'optparse'
 ###############################################################################
 # Settings
 
-SYSTEM_USER = "SYSTEM"
+module Term
+	Switch = Struct.new(:on, :off)
 
-Switch = Struct.new(:on, :off)
+	Styles = {
+		:bold          => Switch.new("\033[1m", "\033[22m"),
+		:italic        => Switch.new("\033[3m", "\033[23m"),
+		:underline     => Switch.new("\033[4m", "\033[24m"),
+		:strikethrough => Switch.new("\033[9m", "\033[29m")
+	}
+
+	Colors16 = {
+		:base    => "\033[39;49m",
+		:black   => "\033[30m",
+		:red     => "\033[31m",
+		:green   => "\033[32m",
+		:yellow  => "\033[33m",
+		:blue    => "\033[34m",
+		:magenta => "\033[35m",
+		:cyan    => "\033[36m",
+		:white   => "\033[37m",
+		:bright_black   => "\033[90m",
+		:bright_red     => "\033[91m",
+		:bright_green   => "\033[92m",
+		:bright_yellow  => "\033[93m",
+		:bright_blue    => "\033[94m",
+		:bright_magenta => "\033[95m",
+		:bright_cyan    => "\033[96m",
+		:bright_white   => "\033[97m"
+	}
+
+	module_function
+	def from_irc(code)
+		case code
+		when "1", "01" # Black
+			return Colors16[:black]
+		when "2", "02" # Blue
+			return Colors16[:blue]
+		when "3", "03" # Green
+			return Colors16[:green]
+		when "4", "04" # Red
+			return Colors16[:red]
+		when "5", "05" # Brown
+			return Colors16[:red]
+		when "6", "06" # Magenta
+			return Colors16[:magenta]
+		when "7", "07" # Orange
+			return Colors16[:bright_red]
+		when "8", "08" # Yellow
+			return Colors16[:yellow]
+		when "9", "09" # Light green
+			return Colors16[:bright_green]
+		when "10"      # Cyan
+			return Colors16[:cyan]
+		when "11"      # Light cyan
+			return Colors16[:bright_cyan]
+		when "12"      # Light blue
+			return Colors16[:bright_blue]
+		when "13"      # Pink
+			return Colors16[:bright_magenta]
+		when "14"      # Grey
+			return Colors16[:bright_black]
+		when "15"      # Light grey
+			return Colors16[:bright_white]
+		when "99"      # Default
+			return "\033[0m"
+		end
+	end
+end
+
+###############################################################################
+# Settings
+
 Style = Struct.new(:time, :nick, :text)
+
+def style(color, style = nil)
+	if color && style then
+		return Term::Colors16[color] + Term::Styles[style].on
+	elsif color then
+		return Term::Colors16[color]
+	elsif style then
+		return Term::Styles[style].on
+	end
+	return nil
+end
+
+CHAT_EVENTS_STYLE = Style.new(
+	style(:bright_black),
+	style(:magenta, :bold),
+	style(:magenta)
+)
+
+SYSTEM_USER = "SYSTEM"
 
 SETTINGS = {
 	:buffer_size => 1000,
 	:history_size => 20,
 	:formatting => {
-		"\002" => Switch.new("\033[1m", "\033[22m"), # Bold
-		"\035" => Switch.new("\033[3m", "\033[23m"), # Italic
-		"\037" => Switch.new("\033[4m", "\033[24m"), # Underline
-		"\036" => Switch.new("\033[9m", "\033[29m"), # Strikethrough
-		"\021" => Switch.new("", "")	# Monospace (not supported)
+		"\002" => Term::Styles[:bold],
+		"\035" => Term::Styles[:italic],
+		"\037" => Term::Styles[:underline],
+		"\036" => Term::Styles[:strikethrough],
+		"\021" => Term::Switch.new("", "") # Monospace (not supported)
 	},
 	:styles => {
-		:message => Style.new("\033[90m", "\033[31m", nil),
-		:ctcp    => Style.new("\033[33m", "\033[33m\033[1m", "\033[33m"),
-		:dcc     => Style.new("\033[32m", "\033[32m\033[1m", "\033[32m"),
-		:action  => Style.new("\033[90m", "\033[34m\033[1m", "\033[34m"),
-		:join    => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:part    => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:kick    => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:ban     => Style.new("\033[90m", "\033[35m\033[1m", "\033[35m"),
-		:system  => Style.new("\033[90m", "\033[0m\033[1m", "\033[1m"),
-		:self    => Style.new("\033[90m", "\033[39;49m\033[1m", nil),
-		:mode    => Style.new("\033[90m", "\033[31m", nil),
-		:users   => Style.new("\033[90m", "\033[31m", nil),
+		:message => Style.new(style(:bright_black), style(:red), nil),
+		:ctcp    => Style.new(style(:yellow), style(:yellow, :bold), style(:yellow)),
+		:dcc     => Style.new(style(:green), style(:green, :bold), style(:green)),
+		:action  => Style.new(style(:blue), style(:blue, :bold), style(:blue)),
+		:join    => CHAT_EVENTS_STYLE,
+		:part    => CHAT_EVENTS_STYLE,
+		:kick    => CHAT_EVENTS_STYLE,
+		:ban     => CHAT_EVENTS_STYLE,
+		:system  => Style.new(style(:bright_black), style(:base, :bold), style(:bold)),
+		:self    => Style.new(style(:bright_black), style(:base, :bold), nil),
+		:mode    => Style.new(style(:bright_black), style(:red), nil),
+		:users   => Style.new(style(:bright_black), style(:red), nil),
 	},
 }
 
@@ -69,59 +157,6 @@ end
 if options[:port] == nil || options[:port] <= 0 then
 	puts "Bad port number #{options[:port]}"
 	exit
-end
-
-###############################################################################
-# Common models
-
-module Color
-	module_function
-
-	# Matching of IRC colors to 16 terminal colors
-	def foreground(code)
-		case code
-		when "1", "01" # Black
-			return "30"
-		when "2", "02" # Blue
-			return "34"
-		when "3", "03" # Green
-			return "32"
-		when "4", "04" # Red
-			return "31"
-		when "5", "05" # Brown
-			return "31"
-		when "6", "06" # Magenta
-			return "35"
-		when "7", "07" # Orange
-			return "91"
-		when "8", "08" # Yellow
-			return "33"
-		when "9", "09" # Light green
-			return "92"
-		when "10"			 # Cyan
-			return "36"
-		when "11"			 # Light cyan
-			return "96"
-		when "12"			 # Light blue
-			return "94"
-		when "13"			 # Pink
-			return "95"
-		when "14"			 # Grey
-			return "90"
-		when "15"			 # Light grey
-			return "97"
-		when "99"			 # Default
-			return "0"
-		end
-	end
-
-	def term(code)
-		return Color::foreground(code)
-	end
-
-	def esc(code)
-		return "\033[" + Color::foreground(code) + "m"
-	end
 end
 
 ###############################################################################
@@ -329,7 +364,15 @@ class CTCP
 end
 
 class Message
-	def initialize(prefix, command, params = [], type = :message, tags = {}, time, ctcp)
+	def initialize(
+		prefix,
+		command,
+		params = [],
+		type = :message,
+		tags = {},
+		time,
+		ctcp
+	)
 		@prefix = prefix
 		@command = command
 		@params = params
@@ -560,7 +603,7 @@ class Message
 				if format.length > 0 then
 					format.each do |x|
 						if x["\003"] then
-							line << "\033[#{Color::term(x[1..-1])}m"
+							line << Term::from_irc(x[1..-1])
 						else
 							line << SETTINGS[:formatting][x].on
 						end
@@ -583,10 +626,23 @@ class Message
 							index = format.index { |s| s["\003"] }
 							format.delete_at(index)
 							line << (text_style != "" ? text_style : "\033[39;49m")
-							i = i + 1
 						else
-							escape, i = "\003", i + 1
+							escape = "\003"
 						end
+
+						i = i + 1
+						next
+					elsif (visible_text[i] == "\017") then
+						format.each { |f|
+							if f["\003"] then
+								line << (text_style != "" ? text_style : "\033[39;49m")
+							else
+								line << SETTINGS[:formatting][f].off
+							end
+						}
+						format.clear
+
+						i = i + 1
 						next
 					end
 
@@ -595,14 +651,14 @@ class Message
 							escape += visible_text[i]
 							if escape.length == 3 then
 								format << escape
-								line << "\033[#{Color::term(escape[1..-1])}m"
+								line << Term::from_irc(escape[1..-1])
 								escape = ""
 							end
 							i = i + 1
 							next
 						else
 							format << escape
-							line << "\033[#{Color::term(escape[1..-1])}m"
+							line << Term::from_irc(escape[1..-1])
 							escape = ""
 						end
 					end
@@ -632,9 +688,9 @@ class Message
 
 				# End of message.
 				break if idx == visible_text.length
-			elsif visible_text[idx] == "\003" then
+			elsif (visible_text[idx] == "\003" || visible_text[idx] == "\017") then
 				# Skip color sequence.
-				if is_escape == false then
+				if (is_escape == false && visible_text[idx] == "\003") then
 					seq, idx = 0, idx + 1
 					while (
 						idx < visible_text.length &&
@@ -644,8 +700,10 @@ class Message
 						seq, idx = seq + 1, idx + 1
 					end
 					is_escape = true
-				else
+				elsif (is_escape == true) then
 					is_escape, idx = false, idx + 1
+				else
+					idx = idx + 1
 				end
 			elsif ["\002", "\035", "\036", "\037"].index(visible_text[idx]) != nil then
 				# Skip formatting.
@@ -1410,7 +1468,6 @@ class App
 					clear
 					layout_buffer
 					redraw
-					@input.size = @size
 				when :int
 					@client.close()
 			end
