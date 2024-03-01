@@ -499,7 +499,7 @@ class Message
 
 	def format(cols, user)
 		case @command
-		when "PRIVMSG"
+		when "PRIVMSG", "NOTICE"
 			case @type
 			when :message
 				return format_internal(
@@ -824,8 +824,8 @@ class Client
 			if parsed.ctcp != nil && parsed.ctcp.command == "VERSION" then
 				response = Message.new(
 					@user,
-					"PRIVMSG",
-					[parsed.nick, "VERSION irc.rb 0.1"],
+					"NOTICE",
+					[parsed.nick, "\001VERSION irc.rb 0.1\001"],
 					:ctcp,
 					{},
 					Time.now,
@@ -1061,7 +1061,7 @@ class App
 			# TODO handle room messages, i.e. user list, topic, mode, kick
 			if (msg.command == "PRIVMSG" || msg.command == "NOTICE") then
 				if msg.params[0] == nil then
-					abort # Bad format
+					next # Bad format
 				else
 					# First message on connect will be from the host.
 					if @first_message then
@@ -1247,21 +1247,60 @@ class App
 		# Go to first line, toggle green background
 		printf("\033[1;1H\033[30;42m")
 
-		length = 0
+		length, active_found, format = 0, false, ""
+		last_idx, start_idx = nil, 0
 		@rooms.each do |room|
 			room_str = "#{room.title}"
-			if (room == @active_room) then
-				room_str = "\033[1m#{room_str}\033[22m"
-			end
 			room_str += (room.is_read? ? " " : "*") + " "
-			print room_str[0, [room_str.length, @size[:cols] - length].min]
-			length += (room.title.length + 2)
 
-			break if length >= @size[:cols]
+			if length + room_str.length > @size[:cols] then
+				if active_found then
+					break
+				else
+					# Remember "start of the page" room index
+					start_idx = @rooms.index(room)
+					# Reset line length, since we're starting new page
+					length = 0
+					# If there are unread rooms on the previous page, enable bold
+					format = (@rooms[0..(last_idx + 1)].any? {
+						|r| !r.is_read?
+					}) ? "\033[1m" : ""
+					# Print previous page symbol
+					printf("\033[1;1H#{format}<")
+				end
+			end
+
+			last_idx = @rooms.index(room)
+
+			# Enable bold for active room
+			if (room == @active_room) then
+				format = "\033[1m"
+				active_found = true
+			else
+				format = "\033[22m"
+			end
+
+			# Print current room
+			print(
+				format +
+				room_str[0, [room_str.length + 2, @size[:cols] - length].min] +
+				"\033[22m"
+			)
+			length += (room.title.length + 2)
 		end
 
 		# Fill the rest of the line
-		print " " * [@size[:cols] - length, 0].max
+		if last_idx < (@rooms.length - 1) then
+			# If there are rooms on the previous page, add extra padding for "<"
+			pad = start_idx > 0 ? 1 : 0
+			# If there are unread rooms on the next page, enable bold for ">"
+			format = (@rooms[(last_idx + 1)..-1].any? { |r| !r.is_read? }) ? "\033[1m" : ""
+			# Fill up to the end of the line + next page symbol
+			print(" " * (@size[:cols] - length - 1 - pad) + format + ">")
+		else
+			# No pages after this one, just fill with blanks
+			print " " * [@size[:cols] - length + 1, 0].max
+		end
 
 		# Reset text settings
 		printf("\033[0m")
