@@ -5,7 +5,7 @@ require "io/console"
 require 'optparse'
 
 ###############################################################################
-# Settings
+# Styling
 
 module Term
 	Switch = Struct.new(:on, :off)
@@ -76,9 +76,6 @@ module Term
 	end
 end
 
-###############################################################################
-# Settings
-
 Style = Struct.new(:time, :nick, :text)
 
 def style(color, style = nil)
@@ -92,6 +89,9 @@ def style(color, style = nil)
 	return nil
 end
 
+###############################################################################
+# Settings
+
 CHAT_EVENTS_STYLE = Style.new(
 	style(:bright_black),
 	style(:magenta, :bold),
@@ -103,6 +103,7 @@ SYSTEM_USER = "SYSTEM"
 SETTINGS = {
 	:buffer_size => 1000,
 	:history_size => 20,
+	:download_dir => "~/Downloads/DCC".force_encoding("UTF-8"),
 	:formatting => {
 		"\002" => Term::Styles[:bold],
 		"\035" => Term::Styles[:italic],
@@ -371,7 +372,8 @@ class Message
 		type = :message,
 		tags = {},
 		time,
-		ctcp
+		ctcp,
+		dcc
 	)
 		@prefix = prefix
 		@command = command
@@ -380,6 +382,7 @@ class Message
 		@tags = tags
 		@time = time
 		@ctcp = ctcp
+		@dcc = dcc
 	end
 
 	def self.from_string(msg)
@@ -391,6 +394,7 @@ class Message
 		tags = {}
 		time = Time.now
 		ctcp = nil
+		dcc = nil
 
 		# IRC message format: [@tags] [:prefix] command [params] [:last_param]
 		# For emotes, message is usually wrapped in ^A control bytes.
@@ -446,6 +450,8 @@ class Message
 					last_param = last_param[7..-1]
 				elsif last_param[/\ADCC /] then
 					type = :dcc
+					dcc_params = last_param[4..-1].scan(/(".+?"|.+?)( |\Z)/).map { |x| x[0] }
+					dcc = CTCP.new(dcc_params[0], dcc_params[1..-1])
 				else
 					type = :ctcp
 					ctcp_params = last_param.split(" ")
@@ -456,7 +462,7 @@ class Message
 			params << last_param
 		end
 
-		return Message.new(prefix, command, params, type, tags, time, ctcp)
+		return Message.new(prefix, command, params, type, tags, time, ctcp, dcc)
 	end
 
 	# Getters
@@ -483,6 +489,10 @@ class Message
 
 	def ctcp
 		@ctcp
+	end
+
+	def dcc
+		@dcc
 	end
 
 	def nick
@@ -512,6 +522,12 @@ class Message
 					cols,
 					"sent 'CTCP #{params[1..-1].join(" ")}' request to \002#{params[0]}\002",
 					SETTINGS[:styles][:ctcp]
+				)
+			when :dcc
+				return format_internal(
+					cols,
+					"sent '#{params[1..-1].join(" ")}' request to \002#{params[0]}\002",
+					SETTINGS[:styles][:dcc]
 				)
 			when :action
 				return format_internal(cols, params[-1], SETTINGS[:styles][:action])
@@ -829,7 +845,8 @@ class Client
 					:ctcp,
 					{},
 					Time.now,
-					CTCP.new("VERSION", "irc.rb 0.1")
+					CTCP.new("VERSION", "irc.rb 0.1"),
+					nil
 				)
 				@irc.send("PRIVMSG #{parsed.nick} \001VERSION irc.rb 0.1\001")
 			end
@@ -1092,12 +1109,18 @@ class App
 						@rooms << room
 					end
 
+					# Print to screen or mark room as unread.
 					if room != @active_room then
 						room.is_read = false
 					else
 						update_buffer(msg)
 					end
 					@dirty = true
+
+					# Handle DCC transfer.
+					if (msg.type == :dcc) then
+						handle_dcc(msg, room)
+					end
 				end
 			elsif (
 				msg.command == "JOIN" ||
@@ -1183,6 +1206,91 @@ class App
 		end
 
 		redraw
+	end
+
+	def handle_dcc(message, room)
+		if message.dcc.command == "SEND" then
+			begin
+				filename = message.dcc.params[0]
+				if filename[/\A".+"\Z/] then
+					filename = filename[1...-1].force_encoding("UTF-8")
+				end
+
+				ipnumber = message.dcc.params[1].to_i
+				ipaddr = (0..3)
+					.map { |x| (ipnumber >> (8 * x)) & 0xFF }
+					.reverse
+					.map { |x| "#{x}" }
+					.join(".")
+				port = message.dcc.params[2].to_i
+				size = message.dcc.params[3].to_i
+
+				Thread.new do
+					begin
+						buffer = "".force_encoding("BINARY")
+						socket = TCPSocket.new(ipaddr, port)
+						total, finished = 0, false
+
+						path = File.expand_path("#{SETTINGS[:download_dir]}/#{filename}")
+						File.open(path, "w") { |file|
+							while true do
+								begin
+									IO.select([socket])
+									buffer += socket.recv(1024 * 1024)
+									size, total = buffer.bytesize, total + buffer.bytesize
+									file.write(buffer)
+									buffer = ""
+
+									# Ack received bytes.
+									socket.send([total].pack("N"), 0)
+
+									# Mark finished if we got the whole file.
+									if (size == total) then
+										finished = true
+									end
+								rescue IO::WaitReadable
+									# Read timeout.
+								rescue Errno::ECONNRESET
+									break
+								rescue => ex
+									if !finished then
+										# Report file download error.
+										system_message("Error downloading file: #{ex}", room)
+									end
+									break
+								end
+							end
+						}
+
+						socket.close()
+						if finished then
+							system_message("Download finished for \002#{filename}\002", room)
+						end
+					rescue => ex
+						system_message("Error downloading file: #{ex.class}: #{ex.message}", room)
+					end
+				end
+			rescue => ex
+				system_message("Error downloading file: #{ex}", room)
+			end
+		end
+	end
+
+	def system_message(text, room)
+		msg = Message.new(
+			SYSTEM_USER,
+			SYSTEM_USER,
+			[text],
+			:system,
+			{},
+			Time.now,
+			nil, nil
+		)
+		room.add(msg)
+
+		if (room == @active_room) then
+			update_buffer(msg)
+		end
 	end
 
 	def run()
@@ -1396,6 +1504,7 @@ class App
 						:message,
 						{},
 						Time.now,
+						nil,
 						nil
 					)
 					room.add(message)
@@ -1412,7 +1521,15 @@ class App
 				end
 
 				text[/\A\/me /] = ""
-				message = Message.new(@client.user, "PRIVMSG", [text], :action, {}, Time.now, nil)
+				message = Message.new(
+					@client.user,
+					"PRIVMSG",
+					[text],
+					:action,
+					{},
+					Time.now,
+					nil, nil
+				)
 				@client.send("PRIVMSG #{@active_room.title} :\001ACTION #{text}\001")
 
 				@active_room.add(message)
@@ -1441,7 +1558,7 @@ class App
 					:message,
 					{},
 					Time.now,
-					nil
+					nil, nil
 				)
 
 				redraw
@@ -1466,7 +1583,7 @@ class App
 					:system,
 					{},
 					Time.now,
-					nil
+					nil, nil
 				)
 
 				@active_room.add(message)
@@ -1480,7 +1597,7 @@ class App
 					:message,
 					{},
 					Time.now,
-					nil
+					nil, nil
 				)
 				@active_room.add(message)
 				update_buffer(message)
