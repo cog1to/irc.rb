@@ -1290,6 +1290,10 @@ class App
 
 		if (room == @active_room) then
 			update_buffer(msg)
+			redraw
+		else
+			room.is_read = false
+			draw_tabs
 		end
 	end
 
