@@ -103,7 +103,8 @@ SYSTEM_USER = "SYSTEM"
 SETTINGS = {
 	:buffer_size => 1000,
 	:history_size => 20,
-	:download_dir => "~/Downloads/DCC".force_encoding("UTF-8"),
+	:download_dir => "~/downloads/DCC".force_encoding("UTF-8"),
+	:packet_size => (1024 * 1024),
 	:formatting => {
 		"\002" => Term::Styles[:bold],
 		"\035" => Term::Styles[:italic],
@@ -1229,31 +1230,45 @@ class App
 					begin
 						buffer = "".force_encoding("BINARY")
 						socket = TCPSocket.new(ipaddr, port)
-						total, finished = 0, false
+						total, finished = 0, packets = 0, false, 0
 
 						path = File.expand_path("#{SETTINGS[:download_dir]}/#{filename}")
 						File.open(path, "w") { |file|
 							while true do
 								begin
 									IO.select([socket])
-									buffer += socket.recv(1024 * 1024)
-									size, total = buffer.bytesize, total + buffer.bytesize
-									file.write(buffer)
-									buffer = ""
+									readbuf = socket.recv(SETTINGS[:packet_size])
+                  read, total = readbuf.bytesize, total + readbuf.bytesize
+                  buffer = buffer + readbuf
 
-									# Ack received bytes.
-									socket.send([total].pack("N"), 0)
-
-									# Mark finished if we got the whole file.
-									if (size == total) then
+                  packet_count = total / SETTINGS[:packet_size]
+                  if (size == total) then
+                    # Write the rest of the file.
+                    file.write(buffer)
+                    # Ack received bytes.
+                    socket.send([total].pack("N"), 0)
+                    # Get out of the loop.
 										finished = true
+                    break
+                  elsif (packet_count > packets) then
+                    # Write one packet to the file.
+                    file.write(buffer[0, SETTINGS[:packet_size]])
+                    # Remove packet from the buffer.
+                    buffer = buffer[SETTINGS[:packet_size]..-1]
+                    # Increase packet count.
+                    packets = packet_count
+                    # Ack received bytes.
+                    socket.send([packet_count * SETTINGS[:packet_size]].pack("N"), 0)
 									end
 								rescue IO::WaitReadable
 									# Read timeout.
 								rescue Errno::ECONNRESET
+									if !finished then
+										system_message("Download error: connection reset", room)
+									end
 									break
 								rescue => ex
-									if !finished then
+									if finished == false then
 										# Report file download error.
 										system_message("Error downloading file: #{ex}", room)
 									end
