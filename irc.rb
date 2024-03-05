@@ -579,7 +579,8 @@ class Message
 				cols,
 				"Topic in #{params[1]} set by #{params[2]} at #{Time.at(params[3].to_i)}"
 			)
-		when "NOTICE", "001", "002", "003", "004", "375", "372", "376"
+		when "NOTICE", "001", "002", "003", "004", "375", "372", "376", "251",
+			"252", "253", "254", "255", "265", "266"
 			return format_internal(cols, @params[1..-1].join(" "))
 		when "SYSTEM"
 			return format_internal(
@@ -1238,27 +1239,27 @@ class App
 								begin
 									IO.select([socket])
 									readbuf = socket.recv(SETTINGS[:packet_size])
-                  read, total = readbuf.bytesize, total + readbuf.bytesize
-                  buffer = buffer + readbuf
+									read, total = readbuf.bytesize, total + readbuf.bytesize
+									buffer = buffer + readbuf
 
-                  packet_count = total / SETTINGS[:packet_size]
-                  if (size == total) then
-                    # Write the rest of the file.
-                    file.write(buffer)
-                    # Ack received bytes.
-                    socket.send([total].pack("N"), 0)
-                    # Get out of the loop.
+									packet_count = total / SETTINGS[:packet_size]
+									if (size == total) then
+										# Write the rest of the file.
+										file.write(buffer)
+										# Ack received bytes.
+										socket.send([total].pack("N"), 0)
+										# Get out of the loop.
 										finished = true
-                    break
-                  elsif (packet_count > packets) then
-                    # Write one packet to the file.
-                    file.write(buffer[0, SETTINGS[:packet_size]])
-                    # Remove packet from the buffer.
-                    buffer = buffer[SETTINGS[:packet_size]..-1]
-                    # Increase packet count.
-                    packets = packet_count
-                    # Ack received bytes.
-                    socket.send([packet_count * SETTINGS[:packet_size]].pack("N"), 0)
+										break
+									elsif (packet_count > packets) then
+										# Write one packet to the file.
+										file.write(buffer[0, SETTINGS[:packet_size]])
+										# Remove packet from the buffer.
+										buffer = buffer[SETTINGS[:packet_size]..-1]
+										# Increase packet count.
+										packets = packet_count
+										# Ack received bytes.
+										socket.send([packet_count * SETTINGS[:packet_size]].pack("N"), 0)
 									end
 								rescue IO::WaitReadable
 									# Read timeout.
