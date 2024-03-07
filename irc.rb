@@ -17,61 +17,97 @@ module Term
 		:strikethrough => Switch.new("\033[9m", "\033[29m")
 	}
 
-	Colors16 = {
-		:base    => "\033[39;49m",
-		:black   => "\033[30m",
-		:red     => "\033[31m",
-		:green   => "\033[32m",
-		:yellow  => "\033[33m",
-		:blue    => "\033[34m",
-		:magenta => "\033[35m",
-		:cyan    => "\033[36m",
-		:white   => "\033[37m",
-		:bright_black   => "\033[90m",
-		:bright_red     => "\033[91m",
-		:bright_green   => "\033[92m",
-		:bright_yellow  => "\033[93m",
-		:bright_blue    => "\033[94m",
-		:bright_magenta => "\033[95m",
-		:bright_cyan    => "\033[96m",
-		:bright_white   => "\033[97m"
+	Colors16FG = {
+		:base    => "39;49",
+		:black   => "30",
+		:red     => "31",
+		:green   => "32",
+		:yellow  => "33",
+		:blue    => "34",
+		:magenta => "35",
+		:cyan    => "36",
+		:white   => "37",
+		:bright_black   => "90",
+		:bright_red     => "91",
+		:bright_green   => "92",
+		:bright_yellow  => "93",
+		:bright_blue    => "94",
+		:bright_magenta => "95",
+		:bright_cyan    => "96",
+		:bright_white   => "97"
+	}
+
+	Colors16BG = {
+		:black   => "40",
+		:red     => "41",
+		:green   => "42",
+		:yellow  => "43",
+		:blue    => "44",
+		:magenta => "45",
+		:cyan    => "46",
+		:white   => "47",
+		:bright_black   => "100",
+		:bright_red     => "101",
+		:bright_green   => "102",
+		:bright_yellow  => "103",
+		:bright_blue    => "104",
+		:bright_magenta => "105",
+		:bright_cyan    => "106",
+		:bright_white   => "107"
 	}
 
 	module_function
-	def from_irc(code)
+	def color(palette, code)
 		case code
 		when "1", "01" # Black
-			return Colors16[:black]
+			return palette[:black]
 		when "2", "02" # Blue
-			return Colors16[:blue]
+			return palette[:blue]
 		when "3", "03" # Green
-			return Colors16[:green]
+			return palette[:green]
 		when "4", "04" # Red
-			return Colors16[:red]
+			return palette[:red]
 		when "5", "05" # Brown
-			return Colors16[:red]
+			return palette[:red]
 		when "6", "06" # Magenta
-			return Colors16[:magenta]
+			return palette[:magenta]
 		when "7", "07" # Orange
-			return Colors16[:bright_red]
+			return palette[:bright_red]
 		when "8", "08" # Yellow
-			return Colors16[:yellow]
+			return palette[:yellow]
 		when "9", "09" # Light green
-			return Colors16[:bright_green]
+			return palette[:bright_green]
 		when "10"      # Cyan
-			return Colors16[:cyan]
+			return palette[:cyan]
 		when "11"      # Light cyan
-			return Colors16[:bright_cyan]
+			return palette[:bright_cyan]
 		when "12"      # Light blue
-			return Colors16[:bright_blue]
+			return palette[:bright_blue]
 		when "13"      # Pink
-			return Colors16[:bright_magenta]
+			return palette[:bright_magenta]
 		when "14"      # Grey
-			return Colors16[:bright_black]
+			return palette[:bright_black]
 		when "15"      # Light grey
-			return Colors16[:bright_white]
-		when "99"      # Default
-			return "\033[0m"
+			return palette[:bright_white]
+		else           # Default
+			return "0"
+		end
+	end
+
+	def foreground(code)
+		color(Colors16FG, code)
+	end
+
+	def background(code)
+		color(Colors16BG, code)
+	end
+
+	def from_irc(code)
+		splitted = code.split(",")
+		if splitted[1] then
+			return "\033[#{foreground(splitted[0])};#{background(splitted[1])}m"
+		else
+			return "\033[#{foreground(splitted[0])}m"
 		end
 	end
 end
@@ -80,9 +116,9 @@ Style = Struct.new(:time, :nick, :text)
 
 def style(color, style = nil)
 	if color && style then
-		return Term::Colors16[color] + Term::Styles[style].on
+		return "\033[#{Term::Colors16FG[color]}m" + Term::Styles[style].on
 	elsif color then
-		return Term::Colors16[color]
+		return "\033[#{Term::Colors16FG[color]}m"
 	elsif style then
 		return Term::Styles[style].on
 	end
@@ -612,8 +648,8 @@ class Message
 		text_style = style.text ? style.text : ""
 
 		idx, count, start, last_break = 0, 0, 0, 0
-		line = ""; lines = []; escape = ""; format = []
-		is_escape = false
+		line = ""; lines = []; format = []
+
 		while idx <= visible_text.length do
 			if (idx == 0) then
 				# First line start with time and sender's nickname.
@@ -650,12 +686,19 @@ class Message
 						if format.any?{ |s| s["\003"] } then
 							index = format.index { |s| s["\003"] }
 							format.delete_at(index)
-							line << (text_style != "" ? text_style : "\033[39;49m")
-						else
-							escape = "\003"
 						end
 
 						i = i + 1
+
+						if m = /\A\d\d?(,\d\d?)?/.match(visible_text[i..-1]) then
+							line << Term::from_irc(m[0]) +
+								(format[0] ? SETTINGS[:formatting][format[0]].on : "")
+							format.append("\003" + m[0])
+							i = i + m[0].length
+						else
+							line << (text_style != "" ? text_style : "\033[39;49m")
+						end
+
 						next
 					elsif (visible_text[i] == "\017") then
 						format.each { |f|
@@ -669,23 +712,6 @@ class Message
 
 						i = i + 1
 						next
-					end
-
-					if escape.length > 0 then
-						if "0123456789"[visible_text[i]] != nil then
-							escape += visible_text[i]
-							if escape.length == 3 then
-								format << escape
-								line << Term::from_irc(escape[1..-1])
-								escape = ""
-							end
-							i = i + 1
-							next
-						else
-							format << escape
-							line << Term::from_irc(escape[1..-1])
-							escape = ""
-						end
 					end
 
 					if (SETTINGS[:formatting].keys.index(visible_text[i]) != nil) then
@@ -715,18 +741,11 @@ class Message
 				break if idx == visible_text.length
 			elsif (visible_text[idx] == "\003" || visible_text[idx] == "\017") then
 				# Skip color sequence.
-				if (is_escape == false && visible_text[idx] == "\003") then
-					seq, idx = 0, idx + 1
-					while (
-						idx < visible_text.length &&
-						"01234567890".index(visible_text[idx]) != nil &&
-						seq < 2
-					) do
-						seq, idx = seq + 1, idx + 1
+				if (visible_text[idx] == "\003") then
+					idx += 1
+					if m = /\A\d\d?(,\d\d?)?/.match(visible_text[idx..-1]) then
+						idx += m[0].length
 					end
-					is_escape = true
-				elsif (is_escape == true) then
-					is_escape, idx = false, idx + 1
 				else
 					idx = idx + 1
 				end
