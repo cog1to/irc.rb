@@ -8,17 +8,17 @@ require 'optparse'
 # Styling
 
 module Term
-	Switch = Struct.new(:on, :off)
+	Switch = Struct.new(:on, :off, :raw)
 
 	Styles = {
-		:bold          => Switch.new("\033[1m", "\033[22m"),
-		:italic        => Switch.new("\033[3m", "\033[23m"),
-		:underline     => Switch.new("\033[4m", "\033[24m"),
-		:strikethrough => Switch.new("\033[9m", "\033[29m")
+		:bold          => Switch.new("\033[1m", "\033[22m", "1"),
+		:italic        => Switch.new("\033[3m", "\033[23m", "3"),
+		:underline     => Switch.new("\033[4m", "\033[24m", "4"),
+		:strikethrough => Switch.new("\033[9m", "\033[29m", "9")
 	}
 
 	Colors16FG = {
-		:base    => "39;49",
+		:base    => "39",
 		:black   => "30",
 		:red     => "31",
 		:green   => "32",
@@ -38,6 +38,7 @@ module Term
 	}
 
 	Colors16BG = {
+		:base    => "49",
 		:black   => "40",
 		:red     => "41",
 		:green   => "42",
@@ -90,7 +91,7 @@ module Term
 		when "15"      # Light grey
 			return palette[:bright_white]
 		else           # Default
-			return "0"
+			return palette[:base]
 		end
 	end
 
@@ -102,12 +103,12 @@ module Term
 		color(Colors16BG, code)
 	end
 
-	def from_irc(code)
+	def from_irc(code, style = nil)
 		splitted = code.split(",")
 		if splitted[1] then
-			return "\033[#{foreground(splitted[0])};#{background(splitted[1])}m"
+			return "\033[#{style ? style.raw + ";" : ""}#{foreground(splitted[0])};#{background(splitted[1])}m"
 		else
-			return "\033[#{foreground(splitted[0])}m"
+			return "\033[#{style ? style.raw + ";" : ""}#{foreground(splitted[0])}m"
 		end
 	end
 end
@@ -691,12 +692,13 @@ class Message
 						i = i + 1
 
 						if m = /\A\d\d?(,\d\d?)?/.match(visible_text[i..-1]) then
-							line << Term::from_irc(m[0]) +
-								(format[0] ? SETTINGS[:formatting][format[0]].on : "")
+							line << Term::from_irc(m[0])
+							format.each { |f| line << SETTINGS[:formatting][f].on }
 							format.append("\003" + m[0])
 							i = i + m[0].length
 						else
 							line << (text_style != "" ? text_style : "\033[39;49m")
+							format.each { |f| line << SETTINGS[:formatting][f].on }
 						end
 
 						next
@@ -1785,3 +1787,4 @@ app.run()
 
 # Restore terminal settings
 `stty #{stty_orig}`
+
