@@ -121,10 +121,11 @@ SETTINGS = {
 		:part    => CHAT_EVENTS_STYLE,
 		:kick    => CHAT_EVENTS_STYLE,
 		:ban     => CHAT_EVENTS_STYLE,
-		:system  => Style.new(style(:bright_black), style(:base, :bold), style(:bold)),
+		:system  => Style.new(style(:bright_black), style(:base, :bold), style(:base, :bold)),
 		:self    => Style.new(style(:bright_black), style(:base, :bold), nil),
 		:mode    => Style.new(style(:bright_black), style(:red), nil),
 		:users   => Style.new(style(:bright_black), style(:red), nil),
+		:error   => Style.new(style(:bright_black), style(:red), style(:red, :bold))
 	},
 }
 
@@ -588,6 +589,12 @@ class Message
 				@params[0..-1].join(" "),
 				SETTINGS[:styles][:system]
 			)
+		when /4\d\d/
+			return format_internal(
+				cols,
+				"ERROR \00399\002#{@command}\002\003: #{@params[1..-1].join(" ")}",
+				SETTINGS[:styles][:error]
+			)
 		else
 			return format_internal(cols, @command + " " + @params.join(" "))
 		end
@@ -838,8 +845,11 @@ class Client
 			disconnect()
 			@on_close.call()
 			return
-		elsif parsed.type == :ctcp then
-			if parsed.ctcp != nil && parsed.ctcp.command == "VERSION" then
+		elsif parsed.command == "PRIVMSG" && parsed.type == :ctcp then
+			if parsed.ctcp != nil &&
+				parsed.ctcp.command == "VERSION" &&
+				parsed.ctcp.params.length == 0
+			then
 				response = Message.new(
 					@user,
 					"NOTICE",
@@ -850,7 +860,7 @@ class Client
 					CTCP.new("VERSION", "irc.rb 0.1"),
 					nil
 				)
-				@irc.send("PRIVMSG #{parsed.nick} \001VERSION irc.rb 0.1\001")
+				@irc.send("NOTICE #{parsed.nick} \001VERSION irc.rb 0.1\001")
 			end
 		elsif parsed.command == "PING" then
 			# Ping request, just pong back.
@@ -1197,6 +1207,11 @@ class App
 			elsif (msg.command == "QUIT") then
 				if room = @active_room then
 					room.add(msg)
+					update_buffer(msg)
+				end
+			elsif (msg.command == "401") then
+				if @active_room then
+					@active_room.add(msg)
 					update_buffer(msg)
 				end
 			else

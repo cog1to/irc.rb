@@ -65,5 +65,5 @@ Ruby gem to be installed, and I don't want to create a dependency right now.
 
 ### License
 
-GNU GPLv2.1
+GNUGPLv3
 
