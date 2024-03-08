@@ -953,33 +953,15 @@ class InputHandler
 						"f", "m", "i", "n", "h", "l", "s", "u", "~"
 						@escape_buf << char
 
-						# Known sequences:
-						if @escape_buf == "[5~" then
-							@on_control.call(:PAGE_UP) if @on_control != nil
-							@escape = false
-						elsif @escape_buf == "[6~" then
-							@on_control.call(:PAGE_DOWN) if @on_control != nil
-							@escape = false
-						elsif @escape_buf == "[3~"
-							@on_control.call(:DELETE) if @on_control != nil
-							@escape = false
-						elsif @escape_buf == "[D"
-							@on_control.call(:ARROW_LEFT) if @on_control != nil
-							@escape = false
-						elsif @escape_buf == "[C"
-							@on_control.call(:ARROW_RIGHT) if @on_control != nil
-							@escape = false
-						elsif @escape_buf == "[A"
-							@on_control.call(:ARROW_UP) if @on_control != nil
-							@escape = false
-						elsif @escape_buf == "[B"
-							@on_control.call(:ARROW_DOWN) if @on_control != nil
-							@escape = false
-						elsif /\[1?[A-Z]/.match(@escape_buf) # xterm sequences
-							@escape = false
-						elsif /\[\d+~/.match(@escape_buf) # vt-100 sequences
-							@escape = false
-						end
+						KNOWN_CONTROLS.each { |key, value|
+							if key.class == String && @escape_buf == key then
+								@on_control.call(value) if @on_control != nil && value
+								@escape = false
+							elsif key.class == Regexp && key.match(@escape_buf) then
+								@on_control.call(value) if @on_control != nil && value
+								@escape = false
+							end
+						}
 
 						@escape_buf = "" if @escape == false
 					else
@@ -991,10 +973,7 @@ class InputHandler
 					when "\t"
 						@on_control.call(:TAB) if @on_control != nil
 					when "\r"
-						if @on_submit then
-							# Clear line and send to the server.
-							@on_submit.call()
-						end
+						@on_submit.call() if @on_submit != nil
 					when 3.chr, 26.chr
 						# CTRL-C, CTRL-Z
 						@on_stop.call() if @on_stop != nil
@@ -1016,6 +995,18 @@ class InputHandler
 			end
 		end
 	end
+
+	KNOWN_CONTROLS = {
+		"[3~" => :DELETE,
+		"[5~" => :PAGE_UP,
+		"[6~" => :PAGE_DOWN,
+		"[D"  => :ARROW_LEFT,
+		"[C"  => :ARROW_RIGHT,
+		"[A"  => :ARROW_UP,
+		"[B"  => :ARROW_DOWN,
+		/\[1?[A-Z]/ => nil,
+		/\[\d+~/ => nil,
+	}
 end
 
 ################################################################################
