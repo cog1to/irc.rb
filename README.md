@@ -63,6 +63,10 @@ into the `download_dir` path defined in `SETTINGS` hash.
 TLS is not supported yet, not sure if it will ever be. It requires an external
 Ruby gem to be installed, and I don't want to create a dependency right now.
 
+### No widechar support
+
+Emojis and wide characters are not handled properly yet. It's on my TODO list.
+
 ### License
 
 GNUGPLv3
