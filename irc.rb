@@ -187,6 +187,10 @@ OptionParser.new do |opt|
 	opt.on("-s", "--pass PASS") { |o|
 		options[:pass] = o
 	}
+	opt.on("-h", "--help") {
+		puts opt
+		exit
+	}
 end.parse!
 
 if options[:user] == nil then

@@ -16,7 +16,7 @@ Windows. Linux and MacOS are ok though.
 The window has a tabs list on top, the text area displaying messages in a tab
 that is currently active, and an input field at the bottom. Active tab is
 printed in **bold**, and a tab that has new unread messages is printed with `*`
-symbol at the end of the name.
+symbol at the end.
 
 You can switch tabs by using **tab** key.
 
@@ -58,7 +58,7 @@ at some point.
 There's a basic DCC support, all `DCC SEND` requests are auto-accepted and saved
 into the `download_dir` path defined in `SETTINGS` hash.
 
-### TLS
+### No TLS support
 
 TLS is not supported yet, not sure if it will ever be. It requires an external
 Ruby gem to be installed, and I don't want to create a dependency right now.
