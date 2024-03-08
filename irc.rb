@@ -948,44 +948,40 @@ class InputHandler
 
 				if @escape then
 					case char
-					when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", "?", "["
+					when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", "?", "[",
+						"A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "S", "T",
+						"f", "m", "i", "n", "h", "l", "s", "u", "~"
 						@escape_buf << char
-					when "A"
-						@on_control.call(:ARROW_UP) if @on_control != nil
-						@escape_buf = ""
-						@escape = false
-					when "B"
-						@on_control.call(:ARROW_DOWN) if @on_control != nil
-						@escape_buf = ""
-						@escape = false
-					when "C"
-						@escape_buf = ""
-						@escape = false
-						on_control.call(:ARROW_RIGHT) if @on_control != nil
-					when "D"
-						@escape_buf = ""
-						@escape = false
-						@on_control.call(:ARROW_LEFT) if @on_control != nil
-					when "E", "F", "G", "H", "J", "K", "S", "T"
-						@escape = false
-						@escape_buf = ""
-					when "f", "m", "i", "n", "h", "l", "s", "u"
-						@escape = false
-						@escape_buf = ""
-					when "~"
-						@escape_buf << char
-						@escape = false
 
 						# Known sequences:
 						if @escape_buf == "[5~" then
 							@on_control.call(:PAGE_UP) if @on_control != nil
+							@escape = false
 						elsif @escape_buf == "[6~" then
 							@on_control.call(:PAGE_DOWN) if @on_control != nil
+							@escape = false
 						elsif @escape_buf == "[3~"
 							@on_control.call(:DELETE) if @on_control != nil
+							@escape = false
+						elsif @escape_buf == "[D"
+							@on_control.call(:ARROW_LEFT) if @on_control != nil
+							@escape = false
+						elsif @escape_buf == "[C"
+							@on_control.call(:ARROW_RIGHT) if @on_control != nil
+							@escape = false
+						elsif @escape_buf == "[A"
+							@on_control.call(:ARROW_UP) if @on_control != nil
+							@escape = false
+						elsif @escape_buf == "[B"
+							@on_control.call(:ARROW_DOWN) if @on_control != nil
+							@escape = false
+						elsif /\[1?[A-Z]/.match(@escape_buf) # xterm sequences
+							@escape = false
+						elsif /\[\d+~/.match(@escape_buf) # vt-100 sequences
+							@escape = false
 						end
 
-						@escape_buf = ""
+						@escape_buf = "" if @escape == false
 					else
 						@escape = false # Unknown or invalid escape sequence
 						@escape_buf = ""
@@ -1001,9 +997,8 @@ class InputHandler
 						end
 					when 3.chr, 26.chr
 						# CTRL-C, CTRL-Z
-						if @on_stop != nil then
-							@on_stop.call()
-						end
+						@on_stop.call() if @on_stop != nil
+						break
 					when 127.chr
 						@on_control.call(:BACKSPACE) if @on_control != nil
 					when 27.chr
@@ -1013,8 +1008,11 @@ class InputHandler
 						@on_append.call(char) if @on_append != nil
 					end
 				end
-			rescue
+			rescue IO::EAGAINWaitReadable
+				# No more to read, break, finish handler.
 				break
+			rescue => ex
+				retry
 			end
 		end
 	end
@@ -1094,6 +1092,7 @@ class App
 		@history_offset = 0
 		@first_message = true
 		@input_buffer = ""
+		@input_offset = 0
 
 		# Get current size.
 		size = (`stty size`).split(" ").map { |x| Integer(x) }
@@ -1497,9 +1496,15 @@ class App
 			return
 		end
 
+		# Draw current content.
 		content = @history_offset < 0 ? @history[@history_offset] : @input_buffer
 		line = content[([0, content.length - @size[:cols] + 4].max)..-1]
 		print("\033[#{@size[:lines]};1H>> #{content}\033[0K")
+
+		# Move cursor back.
+		if @input_offset > 0 then
+			print("\033[#{@input_offset}D")
+		end
 	end
 
 	# Sending
@@ -1691,7 +1696,6 @@ class App
 	def add_input
 		@input.on_stop = lambda {
 			@client.close()
-			@event_loop.stop()
 		}
 
 		@input.on_submit = lambda {
@@ -1703,7 +1707,7 @@ class App
 			@history_offset = 0
 
 			# Reset buffer and send
-			text, @input_buffer = @input_buffer, ""
+			text, @input_buffer, @input_offset = @input_buffer, "", 0
 			parse_and_send(text)
 
 			# Redraw the input
@@ -1713,6 +1717,7 @@ class App
 		@input.on_control = lambda { |x|
 			case x
 			when :ARROW_UP
+				@input_offset = 0
 				@history_offset = [-@history.length, @history_offset - 1].max
 				if @history_offset < 0 then
 					@input_buffer = @history[@history_offset].dup
@@ -1721,6 +1726,7 @@ class App
 				end
 				draw_input
 			when :ARROW_DOWN
+				@input_offset = 0
 				@history_offset = [@history_offset + 1, 0].min
 				if @history_offset < 0 then
 					@input_buffer = @history[@history_offset].dup
@@ -1728,9 +1734,31 @@ class App
 					@input_buffer = ""
 				end
 				draw_input
-			when :DELETE, :BACKSPACE
+			when :BACKSPACE
 				@history_offset = 0
-				@input_buffer = @input_buffer[0...-1]
+				if (@input_buffer.length > 0) then
+					if (@input_offset < @input_buffer.length) then
+						@input_buffer.slice!(
+							[@input_buffer.length - @input_offset - 1, 0].max
+						)
+					else
+						@input_buffer.slice!(0)
+					end
+					@input_offset = [@input_buffer.length, @input_offset].min
+				end
+				draw_input
+			when :DELETE
+				@history_offset = 0
+				if (@input_buffer.length > 0) then
+					if (@input_offset == 0) then
+						@input_buffer.slice!(@input_buffer.length - 1)
+					else
+						@input_buffer.slice!(
+							[@input_buffer.length - @input_offset, 0].max
+						)
+					end
+					@input_offset = [0, @input_offset - 1].max
+				end
 				draw_input
 			when :PAGE_UP
 				@offset = [
@@ -1747,11 +1775,19 @@ class App
 					change_room(@rooms[(index + 1) % @rooms.length])
 					redraw
 				end
+			when :ARROW_LEFT
+				old_offset = @input_offset.dup
+				@input_offset = [@input_buffer.length, @input_offset + 1].min
+				print("\033[1D") if (old_offset != @input_offset)
+			when :ARROW_RIGHT
+				old_offset = @input_offset.dup
+				@input_offset = [0, @input_offset - 1].max
+				print("\033[1C") if (old_offset != @input_offset)
 			end
 		}
 
 		@input.on_append = lambda { |x|
-			@input_buffer << x
+			@input_buffer.insert(@input_buffer.length - @input_offset, x)
 			@history_offset = 0
 			draw_input
 		}
