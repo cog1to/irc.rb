@@ -1692,6 +1692,7 @@ class App
 	def add_input
 		@input.on_stop = lambda {
 			@client.close()
+			@event_loop.stop()
 		}
 
 		@input.on_submit = lambda {
