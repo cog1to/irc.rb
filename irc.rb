@@ -1197,6 +1197,7 @@ class App
 					# Make room active if it's the one we're expecting to join.
 					if @expected_room == name then
 						change_room(room)
+						@expected_room = nil
 					elsif room == @active_room then
 						update_buffer(msg)
 					end
