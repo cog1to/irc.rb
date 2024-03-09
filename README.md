@@ -1,11 +1,18 @@
 ## irc.rb - single-file primitive IRC client
 
-I wrote this client as an excercise to practice some Ruby. There isn't any grand
-idea or plan behind this, I just wanted to have a small portable IRC client.
+I wrote this client as an excercise to practice some Ruby. There isn't any
+grand idea or plan behind this, I just wanted to have a small portable IRC
+client.
 
 Right now the inner logic of the client uses pipes, which is a Unix-only
 mechanism, if I understand it correctly, so the client should not work on
 Windows. Linux and MacOS are ok though.
+
+### Bugs
+
+Expect a lot of bugs. This is a fun/education project. I don't intend to write
+a perfect IRC client with perfect compliance to all modern IRC standards. Feel
+free to report and/or create pull requests.
 
 ### Usage
 
