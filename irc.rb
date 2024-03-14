@@ -14,7 +14,8 @@ module Term
 		:bold          => Switch.new("\033[1m", "\033[22m", "1"),
 		:italic        => Switch.new("\033[3m", "\033[23m", "3"),
 		:underline     => Switch.new("\033[4m", "\033[24m", "4"),
-		:strikethrough => Switch.new("\033[9m", "\033[29m", "9")
+		:strikethrough => Switch.new("\033[9m", "\033[29m", "9"),
+		:reverse       => Switch.new("\033[7m", "\033[27m", "7")
 	}
 
 	Colors16FG = {
@@ -144,6 +145,7 @@ SETTINGS = {
 	:packet_size => (1024 * 1024),
 	:formatting => {
 		"\002" => Term::Styles[:bold],
+		"\026" => Term::Styles[:reverse],
 		"\035" => Term::Styles[:italic],
 		"\037" => Term::Styles[:underline],
 		"\036" => Term::Styles[:strikethrough],
@@ -755,7 +757,7 @@ class Message
 				else
 					idx = idx + 1
 				end
-			elsif ["\002", "\035", "\036", "\037"].index(visible_text[idx]) != nil then
+			elsif ["\002", "\026", "\035", "\036", "\037"].index(visible_text[idx]) != nil then
 				# Skip formatting.
 				idx += 1
 			elsif visible_text[idx] == " " then
