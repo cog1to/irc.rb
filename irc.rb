@@ -263,7 +263,12 @@ class IRC
 
 	def send(msg)
 		if @socket then
-			@socket.send(msg + "\r\n", 0)
+			begin
+				@socket.send(msg + "\r\n", 0)
+			rescue => ex
+				@err.call(ex) if @err
+				close()
+			end
 		end
 	end
 
@@ -893,6 +898,8 @@ class Client
 			# Ping request, just pong back.
 			@irc.send("PONG :#{parsed.params[0]}")
 			return
+		elsif parsed.command == "PONG" then
+			return
 		else
 			if @state == :connecting then
 				@state = :registering
@@ -902,6 +909,7 @@ class Client
 				@irc.send("USER #{@user} 0 * :#{@user}")
 			elsif @state == :registering && parsed.command == "001" then
 				@state = :connected
+				start_ping
 			end
 		end
 
@@ -913,9 +921,24 @@ class Client
 
 	def handle_error(err)
 		if @state != :closed then
-			puts "#{err.class}: #{err}"
+			# TODO: Error handling
+			reconnect
 		end
-		# TODO: Error handling
+	end
+
+	private
+	def start_ping
+		Thread.new do
+			while @state == :connected do
+				send("PING :#{Time.now.to_i}")
+				sleep(30)
+			end
+		end
+	end
+
+	def reconnect
+		disconnect()
+		connect()
 	end
 end
 
@@ -1596,6 +1619,8 @@ class App
 				redraw
 			elsif text == "/quit" then
 				@client.close()
+			elsif text == "/ping" then
+				@client.send("PING :#{Time.now.to_i}")
 			elsif text[/\A\/kick /] then
 				if @active_room != nil then
 					return
