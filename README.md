@@ -65,10 +65,10 @@ at some point.
 There's a basic DCC support, all `DCC SEND` requests are auto-accepted and saved
 into the `download_dir` path defined in `SETTINGS` hash.
 
-### No TLS support
+### TLS support
 
-TLS is not supported yet, not sure if it will ever be. It requires an external
-Ruby gem to be installed, and I don't want to create a dependency right now.
+TLS support can be added by applying the 'patches/enable-tls.patch', or
+executing `make tls`. It requires `openssl` gem.
 
 ### No widechar support
 
