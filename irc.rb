@@ -1047,10 +1047,31 @@ class Room
 		@messages = []
 		@is_read = true
 		@is_left = false
+		@users = []
 	end
 
 	def add(message)
 		@messages << message
+	end
+
+	def add_users(users)
+    for user in users do
+      add_user(user)
+    end
+	end
+
+	def add_user(user)
+		if @users.find_index { |x| /[~&@%+]?#{user}/.match(x) } == nil then
+			@users << user
+		end
+	end
+
+	def remove_user_if_present(user)
+		if index = @users.find_index { |x| /[~&@%+]?#{user}/.match(x) } then
+			return (@users.delete_at(index) != nil)
+		else
+			return false
+		end
 	end
 
 	def clear()
@@ -1127,7 +1148,6 @@ class App
 		while @client.empty? == false do
 			msg = @client.next
 
-			# TODO handle room messages, i.e. user list, topic, mode, kick
 			if (msg.command == "PRIVMSG" || msg.command == "NOTICE") then
 				if msg.params[0] == nil then
 					next # Bad format
@@ -1212,12 +1232,23 @@ class App
 					if room = @rooms.find { |x| x.title == name } then
 						room.is_left = false
 						room.add(msg)
+						# QUESTION: Do we want to mark room unread for these messages?
 					else
 						room = Room.new(name)
 						room.add(msg)
 						@dirty = true
 						@rooms << room
 					end
+
+					# Add users to the room.
+          if (msg.command == "353") then
+            users = msg.params[-1].split(" ")
+            room.add_users(users)
+          elsif (msg.command == "JOIN") then
+            room.add_user(msg.nick)
+					elsif (msg.command == "PART") then
+            room.remove_user_if_present(msg.nick)
+          end
 
 					# Make room active if it's the one we're expecting to join.
 					if @expected_room == name then
@@ -1246,9 +1277,16 @@ class App
 					end
 				end
 			elsif (msg.command == "QUIT") then
-				if room = @active_room then
-					room.add(msg)
-					update_buffer(msg)
+				# Remove user from any room we know he was part of.
+				for room in @rooms do
+					if room.remove_user_if_present(msg.nick) then
+						room.add(msg)
+						# If the user is removed from the active room, redraw.
+						if room == @active_room then
+							update_buffer(msg)
+						end
+						# QUESTION: Do we want to mark room unread for these messages?
+					end
 				end
 			elsif (msg.command == "401") then
 				if @active_room then
