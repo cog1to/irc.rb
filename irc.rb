@@ -1038,6 +1038,193 @@ class InputHandler
 	}
 end
 
+class DccClient
+	class Update
+	end
+
+	class Progress < Update
+		def initialize(nick, file, percent)
+			@nick = nick
+			@file = file
+			@percent = percent
+		end
+
+		def nick
+			return @nick
+		end
+
+		def file
+			return @file
+		end
+
+		def percent
+			return @percent
+		end
+	end
+
+	class Error < Update
+		def initialize(nick, error)
+			@nick = nick
+			@error = error
+		end
+
+		def error
+			return @error
+		end
+
+		def nick
+			return @nick
+		end
+	end
+
+	def initialize()
+		@read_fd, @write_fd = IO.pipe
+		@queue = Queue.new()
+		@updates = Queue.new()
+		@running = false
+	end
+
+	# Events
+
+	def fd()
+		return @read_fd
+	end
+
+	def empty?
+		return @updates.empty?
+	end
+
+	def next
+		if @updates.empty?
+			return nil
+		else
+			return @updates.pop
+		end
+	end
+
+	# Control
+
+	def add(msg)
+		@queue << msg
+	end
+
+	def start()
+		@running = true
+		Thread.new do
+			while @running do
+				begin
+					msg = @queue.pop
+					download(msg)
+				end
+			end
+		end
+	end
+
+	def stop()
+		@queue.clear()
+		@running = false
+	end
+
+	private
+
+	def download(message)
+		room = message.nick
+		filename = message.dcc.params[0]
+		if filename[/\A".+"\Z/] then
+			filename = filename[1...-1].force_encoding("UTF-8")
+		end
+
+		ipnumber = message.dcc.params[1].to_i
+		ipaddr = (0..3)
+			.map { |x| (ipnumber >> (8 * x)) & 0xFF }
+			.reverse
+			.map { |x| "#{x}" }
+			.join(".")
+		port = message.dcc.params[2].to_i
+		size = message.dcc.params[3].to_i
+
+		begin
+			buffer = "".force_encoding("BINARY")
+			socket = TCPSocket.new(ipaddr, port)
+			total, finished, packets = 0, false, 0
+			progress, prev_progress = 0.0, 0.0
+
+			send_progress(room, filename, 0.0)
+
+			path = File.expand_path("#{SETTINGS[:download_dir]}/#{filename}")
+			File.open(path, "w") { |file|
+				while @running do
+					begin
+						IO.select([socket])
+						readbuf = socket.recv(SETTINGS[:packet_size])
+						read, total = readbuf.bytesize, total + readbuf.bytesize
+						buffer = buffer + readbuf
+
+						packet_count = total / SETTINGS[:packet_size]
+						if (size == total) then
+							# Write the rest of the file.
+							file.write(buffer)
+							# Ack received bytes.
+							socket.send([total].pack("N"), 0)
+							# Get out of the loop.
+							finished = true
+							break
+						elsif (packet_count > packets) then
+							# Write one packet to the file.
+							file.write(buffer[0, SETTINGS[:packet_size]])
+							# Remove packet from the buffer.
+							buffer = buffer[SETTINGS[:packet_size]..-1]
+							# Increase packet count.
+							packets = packet_count
+							# Ack received bytes.
+							socket.send([packet_count * SETTINGS[:packet_size]].pack("N"), 0)
+						end
+
+						progress = total.to_f / size
+						if ((progress - prev_progress) > 0.1) then
+							prev_progress = progress
+							send_progress(room, filename, progress)
+						end
+					rescue IO::WaitReadable
+						# Read timeout.
+					rescue Errno::ECONNRESET
+						if !finished then
+							# Report file download error.
+							send_error(room, "Download error: connection reset")
+						end
+						break
+					rescue => ex
+						if finished == false then
+							# Report file download error.
+							send_error(room, "Error downloading file: #{ex}")
+						end
+						break
+					end
+				end
+			}
+
+			socket.close()
+			if @running && finished then
+				send_progress(room, filename, 1.0)
+			else
+				send_error(room, "Download interrupted")
+			end
+		rescue => ex
+			send_error(room, "Error downloading file: #{ex.class}: #{ex.message}")
+		end
+	end
+
+	def send_error(room, message)
+		@updates << Error.new(room, "Download error: connection reset")
+		@write_fd.write("1")
+	end
+
+	def send_progress(room, filename, progress)
+		@updates << Progress.new(room, filename, progress)
+		@write_fd.write("1")
+	end
+end
+
 ################################################################################
 # App logic.
 
@@ -1055,9 +1242,9 @@ class Room
 	end
 
 	def add_users(users)
-    for user in users do
-      add_user(user)
-    end
+		for user in users do
+			add_user(user)
+		end
 	end
 
 	def add_user(user)
@@ -1111,6 +1298,7 @@ class App
 	def initialize(client)
 		@client = client
 		@signals = Signals.new()
+		@dcc = DccClient.new()
 		@event_loop = EventLoop.new
 		@input = InputHandler.new(@event_loop)
 
@@ -1124,6 +1312,9 @@ class App
 
 		# Add signals.
 		@event_loop.add(@signals.fd, lambda { handle_signal })
+
+		# Add DCC events.
+		@event_loop.add(@dcc.fd, lambda { handle_dcc_update })
 
 		# Initial state.
 		@rooms = []
@@ -1142,6 +1333,9 @@ class App
 		# Subscribe to events.
 		add_input
 		@signals.subscribe()
+
+		# Start DCC thread.
+		@dcc.start()
 	end
 
 	def handle_message()
@@ -1241,14 +1435,14 @@ class App
 					end
 
 					# Add users to the room.
-          if (msg.command == "353") then
-            users = msg.params[-1].split(" ")
-            room.add_users(users)
-          elsif (msg.command == "JOIN") then
-            room.add_user(msg.nick)
+					if (msg.command == "353") then
+						users = msg.params[-1].split(" ")
+						room.add_users(users)
+					elsif (msg.command == "JOIN") then
+						room.add_user(msg.nick)
 					elsif (msg.command == "PART") then
-            room.remove_user_if_present(msg.nick)
-          end
+						room.remove_user_if_present(msg.nick)
+					end
 
 					# Make room active if it's the one we're expecting to join.
 					if @expected_room == name then
@@ -1306,87 +1500,47 @@ class App
 
 	def handle_dcc(message, room)
 		if message.dcc.command == "SEND" then
-			begin
-				filename = message.dcc.params[0]
-				if filename[/\A".+"\Z/] then
-					filename = filename[1...-1].force_encoding("UTF-8")
+			@dcc.add(message)
+		end
+	end
+
+	def handle_dcc_update()
+		while @dcc.empty? == false do
+			update = @dcc.next
+
+			case update
+			when DccClient::Error
+				system_message(update.error, update.nick)
+			when DccClient::Progress
+				if update.percent == 0.0 then
+					system_message(
+						sprintf("Download started: '%s'", update.file), update.nick
+					)
+				elsif update.percent == 1.0 then
+					system_message(
+						sprintf("Download finished: '%s'", update.file), update.nick
+					)
+				else
+					system_message(
+						sprintf(
+							"'%s': %.0f%%",
+							update.file,
+							update.percent*100
+						),
+						update.nick
+					)
 				end
-
-				ipnumber = message.dcc.params[1].to_i
-				ipaddr = (0..3)
-					.map { |x| (ipnumber >> (8 * x)) & 0xFF }
-					.reverse
-					.map { |x| "#{x}" }
-					.join(".")
-				port = message.dcc.params[2].to_i
-				size = message.dcc.params[3].to_i
-
-				Thread.new do
-					begin
-						buffer = "".force_encoding("BINARY")
-						socket = TCPSocket.new(ipaddr, port)
-						total, finished = 0, packets = 0, false, 0
-
-						path = File.expand_path("#{SETTINGS[:download_dir]}/#{filename}")
-						File.open(path, "w") { |file|
-							while true do
-								begin
-									IO.select([socket])
-									readbuf = socket.recv(SETTINGS[:packet_size])
-									read, total = readbuf.bytesize, total + readbuf.bytesize
-									buffer = buffer + readbuf
-
-									packet_count = total / SETTINGS[:packet_size]
-									if (size == total) then
-										# Write the rest of the file.
-										file.write(buffer)
-										# Ack received bytes.
-										socket.send([total].pack("N"), 0)
-										# Get out of the loop.
-										finished = true
-										break
-									elsif (packet_count > packets) then
-										# Write one packet to the file.
-										file.write(buffer[0, SETTINGS[:packet_size]])
-										# Remove packet from the buffer.
-										buffer = buffer[SETTINGS[:packet_size]..-1]
-										# Increase packet count.
-										packets = packet_count
-										# Ack received bytes.
-										socket.send([packet_count * SETTINGS[:packet_size]].pack("N"), 0)
-									end
-								rescue IO::WaitReadable
-									# Read timeout.
-								rescue Errno::ECONNRESET
-									if !finished then
-										system_message("Download error: connection reset", room)
-									end
-									break
-								rescue => ex
-									if finished == false then
-										# Report file download error.
-										system_message("Error downloading file: #{ex}", room)
-									end
-									break
-								end
-							end
-						}
-
-						socket.close()
-						if finished then
-							system_message("Download finished for \002#{filename}\002", room)
-						end
-					rescue => ex
-						system_message("Error downloading file: #{ex.class}: #{ex.message}", room)
-					end
-				end
-			rescue => ex
-				system_message("Error downloading file: #{ex}", room)
 			end
 		end
 	end
 
-	def system_message(text, room)
+	def system_message(text, user)
+		room = @rooms.find { |x| x.title == user }
+		if room == nil then
+			room = Room.new(user)
+			@rooms << room
+		end
+
 		msg = Message.new(
 			SYSTEM_USER,
 			SYSTEM_USER,
