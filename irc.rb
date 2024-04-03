@@ -143,6 +143,7 @@ SETTINGS = {
 	:history_size => 20,
 	:download_dir => "~/downloads/DCC".force_encoding("UTF-8"),
 	:packet_size => (1024 * 1024),
+	:download_step => 0.01,
 	:formatting => {
 		"\002" => Term::Styles[:bold],
 		"\026" => Term::Styles[:reverse],
@@ -646,6 +647,10 @@ class Message
 		else
 			return format_internal(cols, @command + " " + @params.join(" "))
 		end
+	end
+
+	def update(params)
+		@params = params
 	end
 
 	private
@@ -1155,7 +1160,11 @@ class DccClient
 			File.open(path, "w") { |file|
 				while @running do
 					begin
-						IO.select([socket])
+						result = IO.select([socket], nil, nil, 60)
+						if result == nil then
+							break
+						end
+
 						readbuf = socket.recv(SETTINGS[:packet_size])
 						read, total = readbuf.bytesize, total + readbuf.bytesize
 						buffer = buffer + readbuf
@@ -1181,7 +1190,7 @@ class DccClient
 						end
 
 						progress = total.to_f / size
-						if ((progress - prev_progress) > 0.1) then
+						if ((progress - prev_progress) > SETTINGS[:download_step]) then
 							prev_progress = progress
 							send_progress(room, filename, progress)
 						end
@@ -1207,7 +1216,10 @@ class DccClient
 			if @running && finished then
 				send_progress(room, filename, 1.0)
 			else
-				send_error(room, "Download interrupted")
+				send_error(
+					room,
+					"Download interrupted" + (result == nil ? ": socket read timeout" : "")
+				)
 			end
 		rescue => ex
 			send_error(room, "Error downloading file: #{ex.class}: #{ex.message}")
@@ -1291,6 +1303,14 @@ class Room
 
 	def title=(value)
 		@title = value
+	end
+
+	def progress_message
+		@progress_message
+	end
+
+	def progress_message=(value)
+		@progress_message = value
 	end
 end
 
@@ -1510,15 +1530,21 @@ class App
 
 			case update
 			when DccClient::Error
-				system_message(update.error, update.nick)
+				system_message(update.error, update.nick, true, false)
 			when DccClient::Progress
 				if update.percent == 0.0 then
 					system_message(
-						sprintf("Download started: '%s'", update.file), update.nick
+						sprintf("Download started: '%s'", update.file),
+						update.nick,
+						false,
+						false
 					)
 				elsif update.percent == 1.0 then
 					system_message(
-						sprintf("Download finished: '%s'", update.file), update.nick
+						sprintf("Download finished: '%s'", update.file),
+						update.nick,
+						false,
+						true
 					)
 				else
 					system_message(
@@ -1527,37 +1553,68 @@ class App
 							update.file,
 							update.percent*100
 						),
-						update.nick
+						update.nick,
+						false,
+						false
 					)
 				end
 			end
 		end
 	end
 
-	def system_message(text, user)
+	def system_message(text, user, error, finished)
+		# Find or create a room
 		room = @rooms.find { |x| x.title == user }
 		if room == nil then
 			room = Room.new(user)
 			@rooms << room
 		end
 
-		msg = Message.new(
-			SYSTEM_USER,
-			SYSTEM_USER,
-			[text],
-			:system,
-			{},
-			Time.now,
-			nil, nil
-		)
-		room.add(msg)
+		if error then
+			# Add error message.
+			message = Message.new(
+				SYSTEM_USER,
+				SYSTEM_USER,
+				[text],
+				:system,
+				{},
+				Time.now,
+				nil, nil
+			)
+			room.add(message)
+		else
+			# Find progress message or create one
+			message = room.progress_message
+			if message == nil then
+				message = Message.new(
+					SYSTEM_USER,
+					SYSTEM_USER,
+					[text],
+					:system,
+					{},
+					Time.now,
+					nil, nil
+				)
+				room.add(message)
+				room.progress_message = message
+			else
+				message.update([text])
+			end
+		end
 
+		# Remove progress message if we're finished or encountered an error.
+		if finished || error then
+			room.progress_message = nil
+		end
+
+		# Redraw or mark unread
 		if (room == @active_room) then
-			update_buffer(msg)
+			layout_buffer
 			redraw
 		else
 			room.is_read = false
 			draw_tabs
+			draw_input
 		end
 	end
 
@@ -1675,7 +1732,7 @@ class App
 			print(" " * (@size[:cols] - length - 1 - pad) + format + ">")
 		else
 			# No pages after this one, just fill with blanks
-			print " " * [@size[:cols] - length + 1, 0].max
+			print " " * [@size[:cols] - length, 0].max
 		end
 
 		# Reset text settings
