@@ -1582,7 +1582,7 @@ class App
 				nil, nil
 			)
 			room.add(message)
-		else
+		elsif !finished then
 			# Find progress message or create one
 			message = room.progress_message
 			if message == nil then
@@ -1612,7 +1612,7 @@ class App
 			layout_buffer
 			redraw
 		else
-			room.is_read = false
+			room.is_read = room.is_read? && !(finished || error)
 			draw_tabs
 			draw_input
 		end
