@@ -1582,7 +1582,7 @@ class App
 				nil, nil
 			)
 			room.add(message)
-		elsif !finished then
+		else
 			# Find progress message or create one
 			message = room.progress_message
 			if message == nil then
