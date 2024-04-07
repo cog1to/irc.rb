@@ -2089,15 +2089,26 @@ end
 # Initialization #
 ##################
 
-# Setup - enable raw mode
-stty_orig = `stty -g`
-`stty raw -echo`
+begin
+	# Setup - enable raw mode
+	stty_orig = `stty -g`
+	`stty raw -echo`
+	# Enable alternate screen buffer mode.
+	STDOUT.puts "\033[?1049h"
 
-# Setup - app event loop
-client = Client.new(options[:server], options[:port], options[:user], options[:pass])
-app = App.new(client)
-app.run()
+	# Setup
+	client = Client.new(options[:server], options[:port], options[:user], options[:pass])
+	app = App.new(client)
 
-# Restore terminal settings
-`stty #{stty_orig}`
+	# Start run loop
+	app.run()
+rescue => ex
+	STDERR.puts "Error: #{ex.class} - '#{ex.message}'"
+	STDERR.puts exception.backtrace
+ensure
+	# Restore terminal settings
+	`stty #{stty_orig}`
+	# Disable alternate screen buffer mode.
+	STDOUT.puts "\033[?1049l"
+end
 
