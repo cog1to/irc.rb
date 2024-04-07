@@ -1260,13 +1260,13 @@ class Room
 	end
 
 	def add_user(user)
-		if @users.find_index { |x| /[~&@%+]?#{user}/.match(x) } == nil then
+		if @users.find_index { |x| /[~&@%+]?#{Regexp.quote(user)}/.match(x) } == nil then
 			@users << user
 		end
 	end
 
 	def remove_user_if_present(user)
-		if index = @users.find_index { |x| /[~&@%+]?#{user}/.match(x) } then
+		if index = @users.find_index { |x| /[~&@%+]?#{Regexp.quote(user)}/.match(x) } then
 			return (@users.delete_at(index) != nil)
 		else
 			return false
