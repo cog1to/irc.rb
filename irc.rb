@@ -1387,7 +1387,7 @@ class App
 
 					# Create room if it doesn't exist, otherwise append the message.
 					room = nil
-					if room = @rooms.find { |x| x.title == name } then
+					if room = @rooms.find { |x| x.title.downcase == name.downcase } then
 						room.add(msg)
 					else
 						room = Room.new(name)
@@ -1412,7 +1412,9 @@ class App
 				msg.command == "JOIN" ||
 				msg.command == "PART" ||
 				msg.command == "MODE" ||
-				msg.command == "353"
+				msg.command == "353" ||
+				msg.command == "332" ||
+				msg.command == "333"
 			) then
 				# Room name.
 				name = ""
@@ -1420,6 +1422,8 @@ class App
 					name = msg.params[-1]
 				elsif msg.command == "353" then
 					name = msg.params[2]
+				elsif msg.command == "332" || msg.command == "333" then
+					name = msg.params[1]
 				elsif msg.command == "MODE" then
 					if (msg.nick == @client.user) then
 						name = @rooms[0].title
@@ -1430,7 +1434,7 @@ class App
 
 				# If we've left the room, delete it from the list.
 				if (msg.command == "PART" && msg.nick == @client.user) then
-					if room = @rooms.find { |x| x.title == name } then
+					if room = @rooms.find { |x| x.title.downcase == name.downcase } then
 						if @active_room == room then
 							change_room(@rooms[[@rooms.index(@active_room) - 1, 0].max])
 						end
@@ -1443,7 +1447,7 @@ class App
 				else
 					# Create room if it doesn't exist, otherwise append the message.
 					room = nil
-					if room = @rooms.find { |x| x.title == name } then
+					if room = @rooms.find { |x| x.title.downcase == name.downcase } then
 						room.is_left = false
 						room.add(msg)
 						# QUESTION: Do we want to mark room unread for these messages?
@@ -1465,7 +1469,7 @@ class App
 					end
 
 					# Make room active if it's the one we're expecting to join.
-					if @expected_room == name then
+					if (@expected_room != nil) && @expected_room.downcase == name.downcase then
 						change_room(room)
 						@expected_room = nil
 					elsif room == @active_room then
@@ -1477,7 +1481,7 @@ class App
 			elsif (msg.command == "KICK") then
 				channel, user = msg.params[0], msg.params[1]
 
-				if room = @rooms.find { |x| x.title == channel } then
+				if room = @rooms.find { |x| x.title.downcase == channel.downcase } then
 					room.add(msg)
 					if user == @client.user then
 						room.is_left = true
