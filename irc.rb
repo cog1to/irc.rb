@@ -858,7 +858,7 @@ class Client
 	end
 
 	def close
-		if @state != :connected then
+		if @state == :closed then
 			return
 		end
 
@@ -1497,7 +1497,7 @@ class App
 			elsif (msg.command == "QUIT") then
 				# Remove user from any room we know he was part of.
 				for room in @rooms do
-					if room.remove_user_if_present(msg.nick) then
+					if room.title == msg.nick || room.remove_user_if_present(msg.nick) != nil then
 						room.add(msg)
 						# If the user is removed from the active room, redraw.
 						if room == @active_room then
@@ -2089,6 +2089,7 @@ end
 # Initialization #
 ##################
 
+error = nil
 begin
 	# Setup - enable raw mode
 	stty_orig = `stty -g`
@@ -2103,12 +2104,17 @@ begin
 	# Start run loop
 	app.run()
 rescue => ex
-	STDERR.puts "Error: #{ex.class} - '#{ex.message}'"
-	STDERR.puts exception.backtrace
+	error = ex
 ensure
 	# Restore terminal settings
 	`stty #{stty_orig}`
 	# Disable alternate screen buffer mode.
 	STDOUT.puts "\033[?1049l"
+
+	# Print an error, if set
+	if error then
+		STDERR.puts "Error: #{error.class} - '#{error.message}'"
+		STDERR.puts error.backtrace
+	end
 end
 
