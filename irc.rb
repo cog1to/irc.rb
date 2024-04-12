@@ -1497,7 +1497,7 @@ class App
 			elsif (msg.command == "QUIT") then
 				# Remove user from any room we know he was part of.
 				for room in @rooms do
-					if room.title == msg.nick || room.remove_user_if_present(msg.nick) != nil then
+					if room.title == msg.nick || (room.remove_user_if_present(msg.nick) != false) then
 						room.add(msg)
 						# If the user is removed from the active room, redraw.
 						if room == @active_room then
