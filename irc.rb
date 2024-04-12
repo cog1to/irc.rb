@@ -2110,11 +2110,11 @@ ensure
 	`stty #{stty_orig}`
 	# Disable alternate screen buffer mode.
 	STDOUT.puts "\033[?1049l"
+end
 
-	# Print an error, if set
-	if error then
-		STDERR.puts "Error: #{error.class} - '#{error.message}'"
-		STDERR.puts error.backtrace
-	end
+# Print an error, if set
+if error then
+	STDERR.puts "Error: #{error.class} - '#{error.message}'"
+	STDERR.puts error.backtrace
 end
 
