@@ -590,11 +590,12 @@ class Message
 				SETTINGS[:styles][:join]
 			)
 		when "PART"
-			return format_internal(
-				cols,
-				"has left \002#{params[-1]}\002",
-				SETTINGS[:styles][:part]
-			)
+      suffix = (params[1] != nil ? " with message \"#{params[1]}\"" : "")
+      return format_internal(
+        cols,
+        "has left \002#{params[0]}\002#{suffix}",
+        SETTINGS[:styles][:part]
+      )
 		when "KICK"
 			return format_internal(
 				cols,
@@ -1419,7 +1420,7 @@ class App
 				# Room name.
 				name = ""
 				if ["JOIN", "PART"].any? { |x| x == msg.command } then
-					name = msg.params[-1]
+					name = msg.params[0]
 				elsif msg.command == "353" then
 					name = msg.params[2]
 				elsif msg.command == "332" || msg.command == "333" then
@@ -1773,7 +1774,7 @@ class App
 		# Draw current content.
 		content = @history_offset < 0 ? @history[@history_offset] : @input_buffer
 		line = content[([0, content.length - @size[:cols] + 4].max)..-1]
-		print("\033[#{@size[:lines]};1H>> #{content}\033[0K")
+		print("\033[#{@size[:lines]};1H>> #{line}\033[0K")
 
 		# Move cursor back.
 		if @input_offset > 0 then
