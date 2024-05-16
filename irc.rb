@@ -229,7 +229,7 @@ class IRC
 
 	def open()
 		@buffer = ""
-		@socket = TCPSocket.new(@addr, @port)
+		@socket = TCPSocket.new(@addr, @port, connect_timeout: 30)
 		listen()
 	end
 
@@ -310,6 +310,11 @@ class Signals
 	def subscribe()
 		Signal.trap("SIGWINCH") do
 			@queue << :winch
+			@write_fd << "1"
+		end
+
+		Signal.trap("TERM") do
+			@queue << :term
 			@write_fd << "1"
 		end
 
@@ -590,12 +595,12 @@ class Message
 				SETTINGS[:styles][:join]
 			)
 		when "PART"
-      suffix = (params[1] != nil ? " with message \"#{params[1]}\"" : "")
-      return format_internal(
-        cols,
-        "has left \002#{params[0]}\002#{suffix}",
-        SETTINGS[:styles][:part]
-      )
+			suffix = (params[1] != nil ? " with message \"#{params[1]}\"" : "")
+			return format_internal(
+				cols,
+				"has left \002#{params[0]}\002#{suffix}",
+				SETTINGS[:styles][:part]
+			)
 		when "KICK"
 			return format_internal(
 				cols,
@@ -603,9 +608,10 @@ class Message
 				SETTINGS[:styles][:kick]
 			)
 		when "QUIT"
+			suffix = ((params[0] != nil && params[0] != "") ? " with message \"#{params[0]}\"" : "")
 			return format_internal(
 				cols,
-				"has quit",
+				"has quit#{suffix}",
 				SETTINGS[:styles][:part]
 			)
 		when "MODE"
@@ -629,6 +635,11 @@ class Message
 			return format_internal(
 				cols,
 				"Topic in #{params[1]} set by #{params[2]} at #{Time.at(params[3].to_i)}"
+			)
+		when "NICK"
+			return format_internal(
+				cols,
+				"changed name to \00304#{params[0]}\017"
 			)
 		when "NOTICE", "001", "002", "003", "004", "375", "372", "376", "251",
 			"252", "253", "254", "255", "265", "266"
@@ -858,13 +869,13 @@ class Client
 		@irc.close()
 	end
 
-	def close
+	def close(message)
 		if @state == :closed then
 			return
 		end
 
 		@state = :closing
-		@irc.send("QUIT")
+		@irc.send("QUIT" + ((message != nil && message != "") ? " :#{message}" : ""))
 	end
 
 	def send(msg)
@@ -1274,6 +1285,14 @@ class Room
 		end
 	end
 
+	def rename_user_if_present(user, name)
+		if index = @users.find_index { |x| /[~&@%+]?#{Regexp.quote(user)}/.match(x) } then
+			return ((@users[index] = name) != nil)
+		else
+			return false
+		end
+	end
+
 	def clear()
 		@messages = []
 	end
@@ -1477,6 +1496,23 @@ class App
 						update_buffer(msg)
 					end
 				end
+			elsif (msg.command == "NICK") then
+				# Rename the user in all rooms he's part of.
+				for room in @rooms do
+					if room.title == msg.nick ||
+						(room.rename_user_if_present(msg.nick, msg.params[0]) != false) then
+						room.add(msg)
+						# If the user is renamed in the active room, redraw.
+						if room == @active_room then
+							update_buffer(msg)
+						end
+						# If the room is private chat with the user, rename the room.
+						if (room.title == msg.nick) then
+							room.title = msg.params[0]
+							draw_tabs
+						end
+					end
+				end
 			elsif (msg.command == "366") then
 				# Ignore
 			elsif (msg.command == "KICK") then
@@ -1504,7 +1540,6 @@ class App
 						if room == @active_room then
 							update_buffer(msg)
 						end
-						# QUESTION: Do we want to mark room unread for these messages?
 					end
 				end
 			elsif (msg.command == "401") then
@@ -1871,8 +1906,16 @@ class App
 				@active_room.add(message)
 				update_buffer(message)
 				redraw
-			elsif text == "/quit" then
-				@client.close()
+			elsif text[/\A\/nick /] then
+				text[/\A\/nick /] = ""
+				if text != "" then
+					@client.send("NICK #{text}")
+					update_buffer(message)
+					redraw
+				end
+			elsif text[/\A\/quit/] then
+				text[/\A\/quit ?/] = ""
+				@client.close(text)
 			elsif text == "/ping" then
 				@client.send("PING :#{Time.now.to_i}")
 			elsif text[/\A\/kick /] then
@@ -1963,7 +2006,9 @@ class App
 					layout_buffer
 					redraw
 				when :int
-					@client.close()
+					@client.close(nil)
+				when :term
+					@client.close(nil)
 			end
 		end
 	end
@@ -1972,7 +2017,7 @@ class App
 
 	def add_input
 		@input.on_stop = lambda {
-			@client.close()
+			@client.close(nil)
 			@event_loop.stop()
 		}
 
