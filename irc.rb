@@ -1913,8 +1913,8 @@ class App
 					update_buffer(message)
 					redraw
 				end
-			elsif text[/\A\/quit/] then
-				text[/\A\/quit ?/] = ""
+			elsif text[/\A\/(quit|exit)/] then
+				text[/\A\/(quit|exit) ?/] = ""
 				@client.close(text)
 			elsif text == "/ping" then
 				@client.send("PING :#{Time.now.to_i}")
