@@ -70,9 +70,11 @@ into the `download_dir` path defined in `SETTINGS` hash.
 TLS support can be added by applying the 'patches/enable-tls.patch', or
 executing `make tls`. It requires `openssl` gem.
 
-### No widechar support
+### Unicode/Wide character support.
 
-Emojis and wide characters are not handled properly yet. It's on my TODO list.
+A basic support of CJK and other wide characters can be added by applying
+'patches/unicode.patch' or executing `make unicode`. The patch requires
+`unicode` gem.
 
 ### License
 
