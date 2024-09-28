@@ -1059,6 +1059,31 @@ class DccClient
 	class Update
 	end
 
+	class Resume < Update
+		def initialize(nick, file, port, size)
+			@nick = nick
+			@file = file
+			@port = port
+			@size = size
+		end
+
+		def nick
+			return @nick
+		end
+
+		def file
+			return @file
+		end
+
+		def port
+			return @port
+		end
+
+		def size
+			return @size
+		end
+	end
+
 	class Progress < Update
 		def initialize(nick, file, percent)
 			@nick = nick
@@ -1094,11 +1119,27 @@ class DccClient
 		end
 	end
 
+	class Connection
+		def initialize(ipaddr, size)
+			@ipaddr = ipaddr
+			@size = size
+		end
+
+		def ipaddr
+			return @ipaddr
+		end
+
+		def size
+			return @size
+		end
+	end
+
 	def initialize()
 		@read_fd, @write_fd = IO.pipe
 		@queue = Queue.new()
 		@updates = Queue.new()
 		@running = false
+		@connections = {}
 	end
 
 	# Events
@@ -1151,25 +1192,67 @@ class DccClient
 			filename = filename[1...-1].force_encoding("UTF-8")
 		end
 
-		ipnumber = message.dcc.params[1].to_i
-		ipaddr = (0..3)
-			.map { |x| (ipnumber >> (8 * x)) & 0xFF }
-			.reverse
-			.map { |x| "#{x}" }
-			.join(".")
-		port = message.dcc.params[2].to_i
-		size = message.dcc.params[3].to_i
-
 		begin
-			buffer = "".force_encoding("BINARY")
-			socket = TCPSocket.new(ipaddr, port)
+			path = File.expand_path("#{SETTINGS[:download_dir]}/#{filename}")
+			port, result = 0, nil
 			total, finished, packets = 0, false, 0
+
+			# Check if file exists.
+			existing_size = File.size?(path)
+			mode = "w"
+
+			if message.dcc.command == "SEND" then
+				# Parse connection info.
+				ipnumber = message.dcc.params[1].to_i
+				ipaddr = (0..3)
+					.map { |x| (ipnumber >> (8 * x)) & 0xFF }
+					.reverse
+					.map { |x| "#{x}" }
+					.join(".")
+				port = message.dcc.params[2].to_i
+				size = message.dcc.params[3].to_i
+
+				if @connections[port] == nil then
+					# If initial SEND request, extract connection info.
+					@connections[port] = Connection.new(ipaddr, size)
+
+					# If file exists, send RESUME request.
+					if existing_size != nil && existing_size > 0 then
+						send_resume(room, filename, port, existing_size)
+						return
+					end
+				else
+					# If we've already got connection info, that means Resume is not
+					# supported. Start download from scratch.
+					@connections[port] = Connection.new(ipaddr, size)
+				end
+			elsif message.dcc.command == "ACCEPT" then
+				# Resume accepted, proceed to download.
+				port = message.dcc.params[1].to_i
+				total = existing_size
+				mode = "a"
+			else
+				send_error(room, "Download error: unsupported command #{message.dcc.command}")
+				return
+			end
+
+			if @connections[port] == nil then
+				# Unknown connection request, ignore
+				return
+			end
+
+			connection = @connections[port]
+			size = connection.size
+			buffer = "".force_encoding("BINARY")
+			socket = TCPSocket.new(connection.ipaddr, port)
 			progress, prev_progress = 0.0, 0.0
 
-			send_progress(room, filename, 0.0)
+			send_progress(room, filename, 0)
+			send_progress(room, filename, total / size)
 
-			path = File.expand_path("#{SETTINGS[:download_dir]}/#{filename}")
-			File.open(path, "w") { |file|
+			# Start downloading
+			File.open(path, mode) { |file|
+				session_total = 0
 				while @running do
 					begin
 						result = IO.select([socket], nil, nil, 60)
@@ -1179,9 +1262,10 @@ class DccClient
 
 						readbuf = socket.recv(SETTINGS[:packet_size])
 						read, total = readbuf.bytesize, total + readbuf.bytesize
+						session_total = session_total + readbuf.size
 						buffer = buffer + readbuf
 
-						packet_count = total / SETTINGS[:packet_size]
+						packet_count = session_total / SETTINGS[:packet_size]
 						if (size == total) then
 							# Write the rest of the file.
 							file.write(buffer)
@@ -1233,8 +1317,12 @@ class DccClient
 					"Download interrupted" + (result == nil ? ": socket read timeout" : "")
 				)
 			end
+			@connections.delete(port)
 		rescue => ex
 			send_error(room, "Error downloading file: #{ex.class}: #{ex.message}")
+			if port > 0 then
+				@connections.delete(port)
+			end
 		end
 	end
 
@@ -1245,6 +1333,11 @@ class DccClient
 
 	def send_progress(room, filename, progress)
 		@updates << Progress.new(room, filename, progress)
+		@write_fd.write("1")
+	end
+
+	def send_resume(room, filename, port, size)
+		@updates << Resume.new(room, filename, port, size)
 		@write_fd.write("1")
 	end
 end
@@ -1559,7 +1652,7 @@ class App
 	end
 
 	def handle_dcc(message, room)
-		if message.dcc.command == "SEND" then
+		if message.dcc.command == "SEND" || message.dcc.command == "ACCEPT" then
 			@dcc.add(message)
 		end
 	end
@@ -1569,6 +1662,27 @@ class App
 			update = @dcc.next
 
 			case update
+			when DccClient::Resume
+				if room = @rooms.find { |x| x.title.downcase == update.nick.downcase } then
+					text = "DCC RESUME \"#{update.file}\" #{update.port} #{update.size}"
+					# Echo message and send to client.
+					message = Message.new(
+						@client.user,
+						"PRIVMSG",
+						[update.nick, text],
+						:dcc,
+						{},
+						Time.now,
+						nil,
+						CTCP.new("RESUME", "\"#{update.file}\" #{update.port} #{update.size}")
+					)
+					room.add(message)
+					if @active_room == room then
+						update_buffer(message)
+						redraw
+					end
+				end
+				@client.send("PRIVMSG #{update.nick} :\001DCC RESUME \"#{update.file}\" #{update.port} #{update.size}\001")
 			when DccClient::Error
 				system_message(update.error, update.nick, true, false)
 			when DccClient::Progress
