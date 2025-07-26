@@ -406,21 +406,17 @@ end
 # Models
 
 class CTCP
+	attr_reader :command, :params
+
 	def initialize(command, params = nil)
 		@command = command
 		@params = params
 	end
-
-	def command
-		return @command
-	end
-
-	def params
-		return @params
-	end
 end
 
 class Message
+	attr_reader :prefix, :command, :params, :type, :tags, :time, :ctcp, :dcc
+
 	def initialize(
 		prefix,
 		command,
@@ -519,36 +515,6 @@ class Message
 		end
 
 		return Message.new(prefix, command, params, type, tags, time, ctcp, dcc)
-	end
-
-	# Getters
-
-	def prefix
-		@prefix
-	end
-
-	def command
-		@command
-	end
-
-	def params
-		@params
-	end
-
-	def type
-		@type
-	end
-
-	def tags
-		@tags
-	end
-
-	def ctcp
-		@ctcp
-	end
-
-	def dcc
-		@dcc
 	end
 
 	def nick
@@ -801,6 +767,8 @@ end
 # IRC client wrapper. Strict interface for sending and receiving messages
 
 class Client
+	attr_reader :host, :user, :state
+
 	def initialize(host, port, user, pass)
 		@host = host
 		@port = port
@@ -813,10 +781,6 @@ class Client
 
 	def on_close=(callback)
 		@on_close = callback
-	end
-
-	def state
-		return @state
 	end
 
 	def next
@@ -833,14 +797,6 @@ class Client
 
 	def fd
 		return @read_fd
-	end
-
-	def host
-		return @host
-	end
-
-	def user
-		return @user
 	end
 
 	def connect
@@ -1060,77 +1016,41 @@ class DccClient
 	end
 
 	class Resume < Update
+		attr_reader :nick, :file, :port, :size
+
 		def initialize(nick, file, port, size)
 			@nick = nick
 			@file = file
 			@port = port
 			@size = size
 		end
-
-		def nick
-			return @nick
-		end
-
-		def file
-			return @file
-		end
-
-		def port
-			return @port
-		end
-
-		def size
-			return @size
-		end
 	end
 
 	class Progress < Update
+		attr_reader :nick, :file, :percent
+
 		def initialize(nick, file, percent)
 			@nick = nick
 			@file = file
 			@percent = percent
 		end
-
-		def nick
-			return @nick
-		end
-
-		def file
-			return @file
-		end
-
-		def percent
-			return @percent
-		end
 	end
 
 	class Error < Update
+		attr_reader :error, :nick
+
 		def initialize(nick, error)
 			@nick = nick
 			@error = error
 		end
-
-		def error
-			return @error
-		end
-
-		def nick
-			return @nick
-		end
 	end
 
 	class Connection
+		attr_reader :ipaddr, :size
+
 		def initialize(ipaddr, size)
 			@ipaddr = ipaddr
 			@size = size
-		end
-
-		def ipaddr
-			return @ipaddr
-		end
-
-		def size
-			return @size
 		end
 	end
 
@@ -1346,6 +1266,9 @@ end
 # App logic.
 
 class Room
+	attr_accessor :title, :progress_message
+	attr_reader :messages
+
 	def initialize(title)
 		@title = title
 		@messages = []
@@ -1404,26 +1327,6 @@ class Room
 
 	def is_left=(value)
 		@is_left = value
-	end
-
-	def messages
-		@messages
-	end
-
-	def title
-		@title
-	end
-
-	def title=(value)
-		@title = value
-	end
-
-	def progress_message
-		@progress_message
-	end
-
-	def progress_message=(value)
-		@progress_message = value
 	end
 end
 
