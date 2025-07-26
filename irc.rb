@@ -951,8 +951,8 @@ class InputHandler
 				if @escape then
 					case char
 					when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", "?", "[",
-						"A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "S", "T",
-						"f", "m", "i", "n", "h", "l", "s", "u", "~"
+						"A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "S", "T", "Z",
+						"f", "m", "i", "n", "h", "l", "s", "u", "~", "\t"
 						@escape_buf << char
 
 						KNOWN_CONTROLS.each { |key, value|
@@ -1006,6 +1006,8 @@ class InputHandler
 		"[C"  => :ARROW_RIGHT,
 		"[A"  => :ARROW_UP,
 		"[B"  => :ARROW_DOWN,
+		"[Z"  => :SHIFT_TAB,
+		"[\t" => :SHIFT_TAB,
 		/\[1?[A-Z]/ => nil,
 		/\[\d+~/ => nil,
 	}
@@ -2113,6 +2115,12 @@ class App
 				if @active_room != nil && @rooms.length > 0 then
 					index = @rooms.index { |x| x == @active_room }
 					change_room(@rooms[(index + 1) % @rooms.length])
+					redraw
+				end
+			when :SHIFT_TAB
+				if @active_room != nil && @rooms.length > 0 then
+					index = @rooms.index { |x| x == @active_room }
+          change_room(@rooms[(index + @rooms.length - 1) % @rooms.length])
 					redraw
 				end
 			when :ARROW_LEFT
