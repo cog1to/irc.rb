@@ -1,31 +1,49 @@
 diff --git a/irc.rb b/irc.rb
-index 2514c78..18a1d76 100755
+index e5cc42b..dc65909 100755
 --- a/irc.rb
 +++ b/irc.rb
-@@ -5,2 +5,3 @@ require "io/console"
+@@ -3,6 +3,7 @@
+ require "socket"
+ require "io/console"
  require 'optparse'
 +require "openssl"
  
-@@ -177,2 +178,3 @@ options = {
+ ###############################################################################
+ # Styling
+@@ -175,6 +176,7 @@ SETTINGS = {
+ options = {
+ 	:port => 6667,
  	:server => "irc.rizon.net",
 +	:tls => false
  }
-@@ -192,2 +194,5 @@ OptionParser.new do |opt|
+ 
+ OptionParser.new do |opt|
+@@ -190,6 +192,9 @@ OptionParser.new do |opt|
+ 	opt.on("-s", "--pass PASS") { |o|
+ 		options[:pass] = o
  	}
 +	opt.on("-t", "--tls") { |o|
 +		options[:tls] = true
 +	}
  	opt.on("-h", "--help") {
-@@ -213,3 +218,3 @@ end
+ 		puts opt
+ 		exit
+@@ -211,10 +216,11 @@ end
+ # messages as string.
+ 
  class IRC
 -	def initialize(addr, port)
 +	def initialize(addr, port, tls)
  		# Save connection data
-@@ -217,2 +222,3 @@ class IRC
+ 		@addr = addr
  		@port = port
 +		@tls = tls
  		@callback = nil
-@@ -231,3 +237,8 @@ class IRC
+ 		@err = nil
+ 	end
+@@ -229,7 +235,12 @@ class IRC
+ 
+ 	def open()
  		@buffer = ""
 -		@socket = TCPSocket.new(@addr, @port, connect_timeout: 30)
 +		if @tls then
@@ -35,7 +53,11 @@ index 2514c78..18a1d76 100755
 +			@socket = TCPSocket.new(@addr, @port)
 +		end
  		listen()
-@@ -240,3 +251,7 @@ class IRC
+ 	end
+ 
+@@ -238,7 +249,11 @@ class IRC
+ 			while @socket do
+ 				begin
  					IO.select([@socket])
 -					@buffer += @socket.recv(128)
 +					if @socket.respond_to? "sysread" then
@@ -44,7 +66,11 @@ index 2514c78..18a1d76 100755
 +						@buffer += @socket.recv(128)
 +					end
  
-@@ -267,3 +282,10 @@ class IRC
+ 					# Parse any full messages
+ 					if @callback then
+@@ -265,7 +280,14 @@ class IRC
+ 	def send(msg)
+ 		if @socket then
  			begin
 -				@socket.send(msg + "\r\n", 0)
 +				if @socket.respond_to? "syswrite" then
@@ -56,7 +82,11 @@ index 2514c78..18a1d76 100755
 + 				@err.call(ex) if @err
 + 				close()
  			rescue => ex
-@@ -277,3 +299,7 @@ class IRC
+ 				@err.call(ex) if @err
+ 				close()
+@@ -275,7 +297,11 @@ class IRC
+ 
+ 	def close()
  		if @socket then
 -			@socket.close()
 +			if @socket.respond_to? "stop" then
@@ -65,21 +95,34 @@ index 2514c78..18a1d76 100755
 +				@socket.close()
 +			end
  			@socket = nil
-@@ -803,3 +829,3 @@ end
+ 		end
+ 	end
+@@ -769,11 +795,12 @@ end
  class Client
+ 	attr_reader :host, :user, :state
+ 
 -	def initialize(host, port, user, pass)
 +	def initialize(host, port, user, pass, tls)
  		@host = host
-@@ -808,2 +834,3 @@ class Client
+ 		@port = port
+ 		@user = user
  		@pass = pass
 +		@tls = tls
  		@state = :closed
-@@ -852,3 +879,3 @@ class Client
+ 		@queue = Queue.new
+ 		@read_fd, @write_fd = IO.pipe
+@@ -806,7 +833,7 @@ class Client
+ 
+ 		@state = :connecting
  		begin
 -			@irc = IRC.new(@host, @port)
 +			@irc = IRC.new(@host, @port, @tls)
  			@irc.on_message { |msg| handle_message(msg) }
-@@ -2146,3 +2173,9 @@ begin
+ 			@irc.on_error { |err| handle_error(err) }
+ 			@irc.open()
+@@ -2169,7 +2196,13 @@ begin
+ 	STDOUT.puts "\033[?1049h"
+ 
  	# Setup
 -	client = Client.new(options[:server], options[:port], options[:user], options[:pass])
 +	client = Client.new(
@@ -90,3 +133,5 @@ index 2514c78..18a1d76 100755
 +		options[:tls]
 +	)
  	app = App.new(client)
+ 
+ 	# Start run loop
