@@ -602,6 +602,18 @@ class Message
 				cols,
 				"Topic in #{params[1]} set by #{params[2]} at #{Time.at(params[3].to_i)}"
 			)
+    when "321"
+      return format_internal(
+        cols, "Channel list: #{params[1..-1].join(" ")}"
+      )
+    when "322"
+      return format_internal(
+        cols, "- #{params[1..-1].join(" ")}"
+      )
+    when "323"
+      return format_internal(
+        cols, "End of channel list"
+      )
 		when "NICK"
 			return format_internal(
 				cols,
@@ -1873,6 +1885,13 @@ class App
 						change_room(@rooms[index])
 						redraw
 					end
+				end
+			elsif text[/\A\/list/] then
+				params = text.split(" ")[1..-1]
+				if params.length > 0 then
+					@client.send("LIST #{params[1..-1]}")
+				else
+					@client.send("LIST")
 				end
 			elsif text[/\A\/msg /] then
 				params = text.split(" ", 3)
