@@ -602,15 +602,15 @@ class Message
 				cols,
 				"Topic in #{params[1]} set by #{params[2]} at #{Time.at(params[3].to_i)}"
 			)
-    when "321"
+		when "321"
       return format_internal(
         cols, "Channel list: #{params[1..-1].join(" ")}"
       )
-    when "322"
+ 		when "322"
       return format_internal(
         cols, "- #{params[1..-1].join(" ")}"
       )
-    when "323"
+ 		when "323"
       return format_internal(
         cols, "End of channel list"
       )
@@ -619,7 +619,7 @@ class Message
 				cols,
 				"changed name to \00304#{params[0]}\017"
 			)
-		when "NOTICE", "001", "002", "003", "004", "375", "372", "376", "251",
+		when "001", "002", "003", "004", "375", "372", "376", "251",
 			"252", "253", "254", "255", "265", "266"
 			return format_internal(cols, @params[1..-1].join(" "))
 		when "SYSTEM"
@@ -1004,7 +1004,7 @@ class InputHandler
 			rescue IO::EAGAINWaitReadable
 				# No more to read, break, finish handler.
 				break
-			rescue => ex
+			rescue => _
 				retry
 			end
 		end
@@ -1195,7 +1195,7 @@ class DccClient
 						end
 
 						readbuf = socket.recv(SETTINGS[:packet_size])
-						read, total = readbuf.bytesize, total + readbuf.bytesize
+						_, total = readbuf.bytesize, total + readbuf.bytesize
 						session_total = session_total + readbuf.size
 						buffer = buffer + readbuf
 
