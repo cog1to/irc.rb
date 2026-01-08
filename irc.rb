@@ -4,8 +4,9 @@ require "socket"
 require "io/console"
 require 'optparse'
 
-###############################################################################
-# Styling
+###########
+# Styling #
+###########
 
 module Term
 	Switch = Struct.new(:on, :off, :raw)
@@ -127,8 +128,9 @@ def style(color, style = nil)
 	return nil
 end
 
-###############################################################################
-# Settings
+############
+# Settings #
+############
 
 CHAT_EVENTS_STYLE = Style.new(
 	style(:bright_black),
@@ -169,8 +171,9 @@ SETTINGS = {
 	},
 }
 
-###############################################################################
-# Arguments
+#################
+# Run arguments #
+#################
 
 options = {
 	:port => 6667,
@@ -206,9 +209,10 @@ if options[:port] == nil || options[:port] <= 0 then
 	exit
 end
 
-###############################################################################
-# Basic IRC socket wrapper. Parses incoming messages, sends out outgoing
-# messages as string.
+#####################################################################
+# Basic IRC socket wrapper. Parses incoming messages, sends out
+# outgoing messages as string.
+#####################################################################
 
 class IRC
 	def initialize(addr, port)
@@ -325,8 +329,9 @@ class Signals
 	end
 end
 
-################################################################################
-# Event loop
+##############
+# Event loop #
+##############
 
 class EventLoop
 	def initialize()
@@ -402,8 +407,9 @@ class EventLoop
 	end
 end
 
-################################################################################
-# Models
+##########
+# Models #
+##########
 
 class CTCP
 	attr_reader :command, :params
@@ -775,8 +781,10 @@ class Message
 end
 
 
-################################################################################
-# IRC client wrapper. Strict interface for sending and receiving messages
+#####################################################################
+# IRC client wrapper. Strict interface for sending and receiving
+# messages.
+#####################################################################
 
 class Client
 	attr_reader :host, :user, :state
@@ -962,9 +970,10 @@ class InputHandler
 
 				if @escape then
 					case char
-					when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", "?", "[",
-						"A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "S", "T", "Z",
-						"f", "m", "i", "n", "h", "l", "s", "u", "~", "\t"
+					when "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ";", 
+						"?", "[", "A", "B", "C", "D", "E", "F", "G", "H", "J", "K",
+						"S", "T", "Z", "f", "m", "i", "n", "h", "l", "s", "u", "~",
+						"\t"
 						@escape_buf << char
 
 						KNOWN_CONTROLS.each { |key, value|
@@ -1026,10 +1035,7 @@ class InputHandler
 end
 
 class DccClient
-	class Update
-	end
-
-	class Resume < Update
+	class Resume
 		attr_reader :nick, :file, :port, :size
 
 		def initialize(nick, file, port, size)
@@ -1040,7 +1046,7 @@ class DccClient
 		end
 	end
 
-	class Progress < Update
+	class Progress
 		attr_reader :nick, :file, :percent
 
 		def initialize(nick, file, percent)
@@ -1050,7 +1056,7 @@ class DccClient
 		end
 	end
 
-	class Error < Update
+	class Error
 		attr_reader :error, :nick
 
 		def initialize(nick, error)
@@ -1117,6 +1123,7 @@ class DccClient
 		@running = false
 	end
 
+	# Internal infrastructure
 	private
 
 	def download(message)
@@ -1156,12 +1163,12 @@ class DccClient
 						return
 					end
 				else
-					# If we've already got connection info, that means Resume is not
-					# supported. Start download from scratch.
+					# If we've already got connection info, that means Resume is
+					# not supported. Start download from scratch.
 					@connections[port] = Connection.new(ipaddr, size)
 				end
 			elsif message.dcc.command == "ACCEPT" then
-				# Resume accepted, proceed to download.
+				# Resume accepted, proceed to download from last byte received.
 				port = message.dcc.params[1].to_i
 				total = existing_size
 				mode = "a"
@@ -1171,7 +1178,7 @@ class DccClient
 			end
 
 			if @connections[port] == nil then
-				# Unknown connection request, ignore
+				# Unknown/unexpected connection request, ignore
 				return
 			end
 
@@ -1228,13 +1235,11 @@ class DccClient
 						# Read timeout.
 					rescue Errno::ECONNRESET
 						if !finished then
-							# Report file download error.
 							send_error(room, "Download error: connection reset")
 						end
 						break
 					rescue => ex
 						if finished == false then
-							# Report file download error.
 							send_error(room, "Error downloading file: #{ex}")
 						end
 						break
@@ -1276,8 +1281,9 @@ class DccClient
 	end
 end
 
-################################################################################
-# App logic.
+#############
+# App logic #
+#############
 
 class Room
 	attr_accessor :title, :progress_message
@@ -1380,11 +1386,11 @@ class App
 		size = (`stty size`).split(" ").map { |x| Integer(x) }
 		@size = { :lines => size[0], :cols => size[1] }
 
-		# Subscribe to events.
+		# Subscribe to input and events.
 		add_input
 		@signals.subscribe()
 
-		# Start DCC thread.
+		# Separate thread for DCC downloads.
 		@dcc.start()
 	end
 
@@ -1698,7 +1704,7 @@ class App
 		@dirty = true
 		redraw
 
-		# Start a runloop.
+		# Start a runloop to handle incoming events.
 		@event_loop.run()
 	end
 
