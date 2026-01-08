@@ -626,8 +626,16 @@ class Message
 				"changed name to \00304#{params[0]}\017"
 			)
 		when "001", "002", "003", "004", "375", "372", "376", "251",
-			"252", "253", "254", "255", "265", "266"
+			"252", "253", "254", "255", "265", "266", "396"
 			return format_internal(cols, @params[1..-1].join(" "))
+		when "311", "312", "313", "317"
+			# WHOIS list entries
+			return format_internal(cols, "\002#{params[1]}\017 " + @params[2..-1].join(" "))
+		when "318"
+			# End of WHOIS list
+      return format_internal(
+        cols, "End of \00304WHOIS\017 list"
+      )
 		when "SYSTEM"
 			return format_internal(
 				cols,
@@ -1994,6 +2002,9 @@ class App
 
 				_, params = text.split(" ", 2)
 				@client.send("MODE #{@active_room.title} #{params}")
+			elsif text[/\A\/whois /] then
+				_, params = text.split(" ", 2)
+				@client.send("WHOIS #{params}")
 			end
 		else
 			if @active_room == nil then
