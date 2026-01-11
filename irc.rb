@@ -300,7 +300,7 @@ class Signals
 	end
 
 	def next
-		if !@queue.empty? then
+		if not empty? then
 			return @queue.pop
 		else
 			return nil
@@ -339,7 +339,7 @@ class EventLoop
 		@control_read, @control_write = IO.pipe
 
 		# Control signal handler.
-		control = lambda {
+		control = -> () {
 			loop do
 				begin
 					signal = @control_read.read_nonblock(1)
@@ -630,7 +630,10 @@ class Message
 			return format_internal(cols, @params[1..-1].join(" "))
 		when "311", "312", "313", "317"
 			# WHOIS list entries
-			return format_internal(cols, "\002#{params[1]}\017 " + @params[2..-1].join(" "))
+			return format_internal(
+				cols,
+				"\002#{params[1]}\017 " + @params[2..-1].join(" ")
+			)
 		when "318"
 			# End of WHOIS list
       return format_internal(
@@ -879,6 +882,8 @@ class Client
 			@on_close.call()
 			return
 		elsif parsed.command == "PRIVMSG" && parsed.type == :ctcp then
+			# CTCP message about client version. Let's be a good citizen and
+			# respond to it.
 			if parsed.ctcp != nil &&
 				parsed.ctcp.command == "VERSION" &&
 				parsed.ctcp.params.length == 0
@@ -950,7 +955,7 @@ class InputHandler
 		@escape_buf = ""
 
 		# Add input listener
-		ev.add(STDIN, lambda {
+		ev.add(STDIN, -> () {
 			handle_input()
 		})
 	end
@@ -1367,18 +1372,18 @@ class App
 		@input = InputHandler.new(@event_loop)
 
 		# Add close callback.
-		@client.on_close = lambda {
+		@client.on_close = -> () {
 			@event_loop.stop()
 		}
 
 		# Add client events.
-		@event_loop.add(client.fd, lambda { handle_message })
+		@event_loop.add(client.fd, -> () { handle_message })
 
 		# Add signals.
-		@event_loop.add(@signals.fd, lambda { handle_signal })
+		@event_loop.add(@signals.fd, -> () { handle_signal })
 
 		# Add DCC events.
-		@event_loop.add(@dcc.fd, lambda { handle_dcc_update })
+		@event_loop.add(@dcc.fd, -> () { handle_dcc_update })
 
 		# Initial state.
 		@rooms = []
@@ -2071,12 +2076,12 @@ class App
 	# Input
 
 	def add_input
-		@input.on_stop = lambda {
+		@input.on_stop = -> () {
 			@client.close(nil)
 			@event_loop.stop()
 		}
 
-		@input.on_submit = lambda {
+		@input.on_submit = -> () {
 			# Reset history offset, append command to history
 			@history << @input_buffer
 			if @history.length > SETTINGS[:history_size] then
@@ -2092,7 +2097,7 @@ class App
 			draw_input
 		}
 
-		@input.on_control = lambda { |x|
+		@input.on_control = -> (x) {
 			case x
 			when :ARROW_UP
 				@input_offset = 0
@@ -2170,8 +2175,8 @@ class App
 			end
 		}
 
-		@input.on_append = lambda { |x|
-			@input_buffer.insert(@input_buffer.length - @input_offset, x)
+		@input.on_append = -> (cmd) {
+			@input_buffer.insert(@input_buffer.length - @input_offset, cmd)
 			@history_offset = 0
 			draw_input
 		}
