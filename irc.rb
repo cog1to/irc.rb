@@ -705,7 +705,8 @@ class Message
 				# Format line from `start` to `last_break`.
 				i = start
 				while (i < last_break) do
-					# Convert formatting and color sequences to terminal escape sequences.
+					# \003 means changing foreground and background text color.
+					# First, we must get rid of current fg/bg colors.
 					if (visible_text[i] == "\003") then
 						if format.any?{ |s| s["\003"] } then
 							index = format.index { |s| s["\003"] }
@@ -714,6 +715,9 @@ class Message
 
 						i = i + 1
 
+						# If \003 is followed by a fg(,bg)? pattern, then that's
+						# the new color to apply. Otherwise we're just resetting
+						# the colors to default and re-apply other formatting.
 						if m = /\A\d\d?(,\d\d?)?/.match(visible_text[i..-1]) then
 							line << Term::from_irc(m[0])
 							format.each { |f| line << SETTINGS[:formatting][f].on }
@@ -725,6 +729,7 @@ class Message
 						end
 
 						next
+					# \017 is full format reset.
 					elsif (visible_text[i] == "\017") then
 						format.each { |f|
 							if f["\003"] then
@@ -739,6 +744,9 @@ class Message
 						next
 					end
 
+					# If we've encountered a known formatting sequence, we either
+					# disable the associated format if it was previously enabled,
+					# or enable it if it's a first encounter.
 					if (SETTINGS[:formatting].keys.index(visible_text[i]) != nil) then
 						if format.any? { |s| s == visible_text[i] } then
 							format -= [visible_text[i]]
@@ -751,7 +759,7 @@ class Message
 						next
 					end
 
-					# Add symbol to the line
+					# No formatting sequences, add symbol to the line.
 					line << visible_text[i]
 					i += 1
 				end
