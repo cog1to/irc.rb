@@ -420,10 +420,31 @@ class CTCP
 	end
 end
 
+class TextSymbol
+	attr_reader :text
+
+	def initialize(text)
+		@text = text
+	end
+end
+
+class FormatSymbol
+	attr_reader :format
+
+	def initialize(format)
+		@format = format
+	end
+
+	def <<(sym)
+		@format << sym.format
+	end
+end
+
 class Message
 	attr_reader :prefix, :command, :params, :type, :tags, :time, :ctcp, :dcc
 
 	def initialize(
+		user,
 		prefix,
 		command,
 		params = [],
@@ -433,6 +454,7 @@ class Message
 		ctcp,
 		dcc
 	)
+		@user = user
 		@prefix = prefix
 		@command = command
 		@params = params
@@ -441,9 +463,10 @@ class Message
 		@time = time
 		@ctcp = ctcp
 		@dcc = dcc
+		@symbols = make_symbols(user)
 	end
 
-	def self.from_string(msg)
+	def self.from_string(msg, user)
 		tmp = msg.dup
 		type = :message
 		prefix = ""
@@ -520,7 +543,7 @@ class Message
 			params << last_param
 		end
 
-		return Message.new(prefix, command, params, type, tags, time, ctcp, dcc)
+		return Message.new(user, prefix, command, params, type, tags, time, ctcp, dcc)
 	end
 
 	def nick
@@ -536,131 +559,281 @@ class Message
 	end
 
 	def format(cols, user)
+		idx, format, prev, count, tcount = 0, "", "", 0, 0
+		last_break, tlast_break = 0, 0
+		lines, line, s = [], ""
+		prefix_length = 6
+		
+		@symbols.each_with_index { |s, i|
+			if s.is_a? FormatSymbol then
+				format = s.format
+				line << format
+				tcount += format.size
+				next
+			end
+
+			t = s.text
+			is_space = t.match?(/\s+/)
+
+			# Check word boundary.
+			if is_space and not prev.match?(/s+/) then
+				tlast_break = tcount
+				last_break = count
+			end
+
+			if count + t.size > cols then
+				# If there are no break throughout the whole line, break at
+				# current symbol.
+				if last_break == 0 then
+					tlast_break = tcount + 1
+				end
+
+				# Break at closest word boundary and append line.
+				line, left = line[0..tlast_break], line[tlast_break..-1].to_s.lstrip
+				lines << line.to_s
+				# Next line always starts with padding.
+				line = (" " * prefix_length) + format + left.to_s + (is_space ? "" : t)
+				# Adjust symbol count, ignore space at current symbol.
+				count = prefix_length + left.to_s.size + (is_space ? 0 : t.size)
+				tcount = count + format.size
+				# Reset break.
+				last_break = 0
+				tlast_break = 0
+			else
+				line << t
+				count += t.size
+				tcount += t.size
+			end
+		}
+
+		# Last line.
+		lines << line + "\033[0m"
+
+		return lines
+	end
+
+	def update(params)
+		@params = params
+		@symbols = make_symbols(@user)
+	end
+
+	private
+
+	def make_symbols(user)
 		case @command
 		when "PRIVMSG", "NOTICE"
 			case @type
 			when :message
-				return format_internal(
-					cols,
+				return parse(
 					@params[1..-1].join(" "),
 					user == nick ? SETTINGS[:styles][:self] : SETTINGS[:styles][:message]
 				)
 			when :ctcp
-				return format_internal(
-					cols,
+				return parse(
 					"sent 'CTCP #{params[1..-1].join(" ")}' request to \002#{params[0]}\002",
 					SETTINGS[:styles][:ctcp]
 				)
 			when :dcc
-				return format_internal(
-					cols,
+				return parse(
 					"sent '#{params[1..-1].join(" ")}' request to \002#{params[0]}\002",
 					SETTINGS[:styles][:dcc]
 				)
 			when :action
-				return format_internal(cols, params[-1], SETTINGS[:styles][:action])
+				return parse(params[-1], SETTINGS[:styles][:action])
 			end
 		when "JOIN"
-			return format_internal(
-				cols,
+			return parse(
 				"has joined \002#{params[-1]}\002",
 				SETTINGS[:styles][:join]
 			)
 		when "PART"
 			suffix = (params[1] != nil ? " with message \"#{params[1]}\"" : "")
-			return format_internal(
-				cols,
+			return parse(
 				"has left \002#{params[0]}\002#{suffix}",
 				SETTINGS[:styles][:part]
 			)
 		when "KICK"
-			return format_internal(
-				cols,
+			return parse(
 				"kicked \002#{params[1]}\002 [#{params[2..-1].join(" ")}]",
 				SETTINGS[:styles][:kick]
 			)
 		when "QUIT"
 			suffix = ((params[0] != nil && params[0] != "") ? " with message \"#{params[0]}\"" : "")
-			return format_internal(
-				cols,
+			return parse(
 				"has quit#{suffix}",
 				SETTINGS[:styles][:part]
 			)
 		when "MODE"
-			return format_internal(
-				cols,
+			return parse(
 				"set mode \002#{params[1]}\002 for \002#{params[0]}\002",
 				SETTINGS[:styles][:mode]
 			)
 		when "353"
-			return format_internal(
-				cols,
+			return parse(
 				"Users: #{params[-1].split(" ").map{ |u| "\00303#{u}\003" }.join(", ")}",
 				SETTINGS[:styles][:users]
 			)
 		when "332"
-			return format_internal(
-				cols,
+			return parse(
 				"Topic: #{params[2..-1].join(" ")}"
 			)
 		when "333"
-			return format_internal(
-				cols,
+			return parse(
 				"Topic in #{params[1]} set by #{params[2]} at #{Time.at(params[3].to_i)}"
 			)
 		when "321"
-      return format_internal(
-        cols, "Channel list: #{params[1..-1].join(" ")}"
+      return parse(
+        "Channel list: #{params[1..-1].join(" ")}"
       )
  		when "322"
-      return format_internal(
-        cols, "- #{params[1..-1].join(" ")}"
+      return parse(
+        "- #{params[1..-1].join(" ")}"
       )
  		when "323"
-      return format_internal(
-        cols, "End of channel list"
+      return parse(
+        "End of channel list"
       )
 		when "NICK"
-			return format_internal(
-				cols,
+			return parse(
 				"changed name to \00304#{params[0]}\017"
 			)
 		when "001", "002", "003", "004", "375", "372", "376", "251",
 			"252", "253", "254", "255", "265", "266", "396"
-			return format_internal(cols, @params[1..-1].join(" "))
+			return parse(@params[1..-1].join(" "))
 		when "311", "312", "313", "317"
 			# WHOIS list entries
-			return format_internal(
-				cols,
+			return parse(
 				"\002#{params[1]}\017 " + @params[2..-1].join(" ")
 			)
 		when "318"
 			# End of WHOIS list
-      return format_internal(
-        cols, "End of \00304WHOIS\017 list"
+      return parse(
+        "End of \00304WHOIS\017 list"
       )
 		when "SYSTEM"
-			return format_internal(
-				cols,
+			return parse(
 				@params[0..-1].join(" "),
 				SETTINGS[:styles][:system]
 			)
 		when /4\d\d/
-			return format_internal(
-				cols,
+			return parse(
 				"ERROR \00399\002#{@command}\002\003: #{@params[1..-1].join(" ")}",
 				SETTINGS[:styles][:error]
 			)
 		else
-			return format_internal(cols, @command + " " + @params.join(" "))
+			return parse(@command + " " + @params.join(" "))
 		end
 	end
 
-	def update(params)
-		@params = params
-	end
+	def parse(text, style = SETTINGS[:styles][:message])
+		time = "%02d:%02d " % [@time.hour, @time.min]
+		time_style = style.time
+		nick_style = style.nick
+		text_style = style.text ? style.text : ""
 
-	private
+		begin
+			symbols = []
+			symbols.append(
+				FormatSymbol.new(time_style),
+				*time.chars.map { |s| TextSymbol.new(s) },
+				FormatSymbol.new("\033[0m" + nick_style),
+				*nick.chars.map { |s| TextSymbol.new(s) },
+				FormatSymbol.new("\033[0m"),
+				TextSymbol.new(" "),
+				FormatSymbol.new("\033[0m" + text_style)
+			)
+
+			# Special append logic to merge formatting symbols at the end of
+			# the array.
+			def symbols.append_format(arg)
+				if last = self[-1] then
+					if last.is_a? FormatSymbol then
+						last << arg
+					end
+				end
+				self.append(arg)
+			end
+
+			idx, format = 0, []
+			while idx < text.length do
+				# \003 means changing foreground and background text color.
+				# First, we must get rid of current fg/bg colors.
+				if (text[idx] == "\003") then
+					if format.any?{ |s| s["\003"] } then
+						index = format.index { |s| s["\003"] }
+						format.delete_at(index)
+					end
+
+					# Advance to next symbol.
+					idx = idx + 1
+
+					# If \003 is followed by a fg(,bg)? pattern, then that's
+					# the new color to apply. Otherwise we're just resetting
+					# the colors to default and re-apply other formatting.
+					style = ""
+					if m = /\A\d\d?(,\d\d?)?/.match(text[idx..-1]) then
+						style << Term::from_irc(m[0])
+						format.each { |f| style << SETTINGS[:formatting][f].on }
+						format.append("\003" + m[0])
+						idx = idx + m[0].length
+					else
+						style << (text_style != "" ? text_style : "\033[39;49m")
+						format.each { |f| line << SETTINGS[:formatting][f].on }
+					end
+
+					# Add new style to the list.
+					symbols.append_format(FormatSymbol.new(style))
+
+					next
+				# \017 is full format reset.
+				elsif (text[idx] == "\017") then
+					style = (text_style != "" ? text_style : "\033[39;49m")
+					format.each { |f|
+						if not f["\003"] then
+							style << SETTINGS[:formatting][f].off
+						end
+					}
+					format.clear
+
+					# Add new style to the list.
+					symbols.append_format(FormatSymbol.new(style))
+
+					# Advance to next symbol.
+					idx = idx + 1
+					next
+				end
+
+				# If we've encountered a known formatting sequence, we either
+				# disable the associated format if it was previously enabled,
+				# or enable it if it's a first encounter.
+				if (SETTINGS[:formatting].keys.index(text[idx]) != nil) then
+					style = ""
+					if format.any? { |s| s == text[idx] } then
+						format -= [text[idx]]
+						style << SETTINGS[:formatting][text[idx]].off
+					else
+						format << text[idx]
+						style << SETTINGS[:formatting][text[idx]].on
+					end
+
+					# Add new style to the list.
+					symbols.append_format(FormatSymbol.new(style))
+
+					# Advance to next symbol.
+					idx = idx + 1
+					next
+				end
+
+				# Not a formatting sequence, add new symbol to the list as text.
+				symbols.append(TextSymbol.new(text[idx]))
+				idx = idx + 1
+			end
+		rescue => error
+			STDERR.puts error
+		end
+
+		return symbols
+	end
 
 	def format_internal(cols, text, style = SETTINGS[:styles][:message])
 		time = "%02d:%02d" % [@time.hour, @time.min]
@@ -882,7 +1055,7 @@ class Client
 	end
 
 	def handle_message(msg)
-		parsed = Message.from_string(msg)
+		parsed = Message.from_string(msg, @user)
 		response = nil
 
 		if parsed.command == "ERROR" && state == :closing then
@@ -897,6 +1070,7 @@ class Client
 				parsed.ctcp.params.length == 0
 			then
 				response = Message.new(
+					@user,
 					@user,
 					"NOTICE",
 					[parsed.nick, "\001VERSION irc.rb 0.1\001"],
@@ -1612,6 +1786,7 @@ class App
 					# Echo message and send to client.
 					message = Message.new(
 						@client.user,
+						@client.user,
 						"PRIVMSG",
 						[update.nick, text],
 						:dcc,
@@ -1671,6 +1846,7 @@ class App
 		if error then
 			# Add error message.
 			message = Message.new(
+				user,
 				SYSTEM_USER,
 				SYSTEM_USER,
 				[text],
@@ -1685,6 +1861,7 @@ class App
 			message = room.progress_message
 			if message == nil then
 				message = Message.new(
+					user,
 					SYSTEM_USER,
 					SYSTEM_USER,
 					[text],
@@ -1935,6 +2112,7 @@ class App
 					# Echo message and send to client.
 					message = Message.new(
 						@client.user,
+						@client.user,
 						"PRIVMSG",
 						[user, message_text],
 						:message,
@@ -1958,6 +2136,7 @@ class App
 
 				text[/\A\/me /] = ""
 				message = Message.new(
+					@client.user,
 					@client.user,
 					"PRIVMSG",
 					[text],
@@ -1999,6 +2178,7 @@ class App
 
 				message = Message.new(
 					@client.user,
+					@client.user,
 					"KICK",
 					[@active_room.title, who, kick_msg],
 					:message,
@@ -2026,6 +2206,7 @@ class App
 
 			if @active_room.is_left? then
 				message = Message.new(
+					@client.user,
 					SYSTEM_USER,
 					SYSTEM_USER,
 					["You've left this room"],
@@ -2040,6 +2221,7 @@ class App
 			else
 				# Echo the message to current channel
 				message = Message.new(
+					@client.user,
 					@client.user,
 					"PRIVMSG",
 					[@active_room.title, text],
