@@ -1,54 +1,103 @@
 diff --git a/irc.rb b/irc.rb
-index 2514c78..a6039b8 100755
+index aa75d6f..a6f5673 100755
 --- a/irc.rb
 +++ b/irc.rb
-@@ -5,2 +5,3 @@ require "io/console"
+@@ -3,6 +3,7 @@
+ require "socket"
+ require "io/console"
  require 'optparse'
 +require "unicode"
  
-@@ -671,4 +672,4 @@ class Message
- 		time = "%02d:%02d" % [@time.hour, @time.min]
--		visible_text = text
--		prefix_length = time.length + 1
-+		visible_text = Unicode::text_elements(text.force_encoding("UTF-8"))
-+		prefix_length = Unicode::width(time, true) + 1
+ ###########
+ # Styling #
+@@ -559,10 +560,11 @@ class Message
+ 	end
  
-@@ -685,3 +686,3 @@ class Message
- 				line = "#{time_style}#{time}\033[0m #{nick_style}#{nick}\033[0m #{text_style}"
--				count += time.length + nick.length + 2
-+				count += Unicode::width(time, true) + Unicode::width(nick, true) + 2
- 			elsif (count == 0) then
-@@ -704,3 +705,3 @@ class Message
- 			# If we got to the end of the terminal line, append line to the output.
--			if (count == cols || idx == visible_text.length) then
-+			if (count >= cols || idx == visible_text.length) then
- 				if idx == visible_text.length || last_break == start then
-@@ -721,3 +722,3 @@ class Message
- 
--						if m = /\A\d\d?(,\d\d?)?/.match(visible_text[i..-1]) then
-+						if m = /\A\d\d?(,\d\d?)?/.match(visible_text[i..-1].join) then
- 							line << Term::from_irc(m[0])
-@@ -775,3 +776,3 @@ class Message
- 					idx += 1
--					if m = /\A\d\d?(,\d\d?)?/.match(visible_text[idx..-1]) then
-+					if m = /\A\d\d?(,\d\d?)?/.match(visible_text[idx..-1].join) then
- 						idx += m[0].length
-@@ -790,3 +791,3 @@ class Message
- 				# Normal symbol, just append to the current segment length.
--				idx, count = idx + 1, count + 1
-+				idx, count = idx + 1, count + Unicode::width(visible_text[idx])
+ 	def format(cols, user)
+-		idx, format, prev, count, tcount = 0, "", "", 0, 0
++		format, prev, count, tcount = 0, "", 0, 0
+ 		last_break, tlast_break = 0, 0
+-		lines, line, s = [], ""
+-		prefix_length = 6
++		lines, line = [], ""
++		time = "%02d:%02d " % [@time.hour, @time.min]
++		prefix_length = Unicode::width(time, true)
+ 		
+ 		@symbols.each_with_index { |s, i|
+ 			if s.is_a? FormatSymbol then
+@@ -573,6 +575,7 @@ class Message
  			end
-@@ -1365,4 +1366,5 @@ class App
+ 
+ 			t = s.text
++			tsize = Unicode::width(t, true)
+ 			is_space = t.match?(/\s+/)
+ 
+ 			# Check word boundary.
+@@ -581,7 +584,7 @@ class Message
+ 				last_break = count
+ 			end
+ 
+-			if count + t.size > cols then
++			if count + tsize > cols then
+ 				# If there are no break throughout the whole line, break at
+ 				# current symbol.
+ 				if last_break == 0 then
+@@ -594,15 +597,15 @@ class Message
+ 				# Next line always starts with padding.
+ 				line = (" " * prefix_length) + format + left.to_s + (is_space ? "" : t)
+ 				# Adjust symbol count, ignore space at current symbol.
+-				count = prefix_length + left.to_s.size + (is_space ? 0 : t.size)
++				count = prefix_length + Unicode::width(left.to_s, true) + (is_space ? 0 : tsize)
+ 				tcount = count + format.size
+ 				# Reset break.
+ 				last_break = 0
+ 				tlast_break = 0
+ 			else
+ 				line << t
+-				count += t.size
+-				tcount += t.size
++				count += tsize
++				tcount += tsize
+ 			end
+ 		}
+ 
+@@ -755,7 +758,8 @@ class Message
+ 			end
+ 
+ 			idx, format = 0, []
+-			while idx < text.length do
++			text = Unicode::text_elements(text.force_encoding("UTF-8"))
++			while idx < text.size do
+ 				# \003 means changing foreground and background text color.
+ 				# First, we must get rid of current fg/bg colors.
+ 				if (text[idx] == "\003") then
+@@ -771,7 +775,7 @@ class Message
+ 					# the new color to apply. Otherwise we're just resetting
+ 					# the colors to default and re-apply other formatting.
+ 					style = ""
+-					if m = /\A\d\d?(,\d\d?)?/.match(text[idx..-1]) then
++					if m = /\A\d\d?(,\d\d?)?/.match(text[idx..-1].join) then
+ 						style << Term::from_irc(m[0])
+ 						format.each { |f| style << SETTINGS[:formatting][f].on }
+ 						format.append("\003" + m[0])
+@@ -1438,8 +1442,9 @@ class App
+ 		@history = []
+ 		@history_offset = 0
  		@first_message = true
 -		@input_buffer = ""
 +		@input_buffer = []
  		@input_offset = 0
 +		@symbol_buffer = ""
  
-@@ -1810,4 +1812,15 @@ class App
+ 		# Get current size.
+ 		size = (`stty size`).split(" ").map { |x| Integer(x) }
+@@ -1907,12 +1912,24 @@ class App
+ 
+ 		# Draw current content.
  		content = @history_offset < 0 ? @history[@history_offset] : @input_buffer
 -		line = content[([0, content.length - @size[:cols] + 4].max)..-1]
 -		print("\033[#{@size[:lines]};1H>> #{line}\033[0K")
++		STDERR.puts "content: #{content.join}"
 +		# Get how much symbols we can fit
 +		max_width = @size[:cols] - 4
 +		line, offset = [], -1
@@ -63,58 +112,83 @@ index 2514c78..a6039b8 100755
 +		# Print the input.
 +		print("\033[#{@size[:lines]};1H>> #{line.join}\033[0K")
  
-@@ -1815,3 +1828,3 @@ class App
+ 		# Move cursor back.
  		if @input_offset > 0 then
 -			print("\033[#{@input_offset}D")
 +			print("\033[#{Unicode::width(@input_buffer[-@input_offset..].join, true)}D")
  		end
-@@ -1984,3 +1997,2 @@ class App
- 				update_buffer(message)
--
- 				# Send the message to client.
-@@ -2032,3 +2044,3 @@ class App
+ 	end
+ 
+@@ -2144,7 +2161,7 @@ class App
+ 			@history_offset = 0
+ 
  			# Reset buffer and send
 -			text, @input_buffer, @input_offset = @input_buffer, "", 0
 +			text, @input_buffer, @input_offset = @input_buffer.join, [], 0
  			parse_and_send(text)
-@@ -2047,3 +2059,3 @@ class App
+ 
+ 			# Redraw the input
+@@ -2159,7 +2176,7 @@ class App
+ 				if @history_offset < 0 then
+ 					@input_buffer = @history[@history_offset].dup
  				else
 -					@input_buffer = ""
 +					@input_buffer = []
  				end
-@@ -2056,3 +2068,3 @@ class App
+ 				draw_input
+ 			when :ARROW_DOWN
+@@ -2168,7 +2185,7 @@ class App
+ 				if @history_offset < 0 then
+ 					@input_buffer = @history[@history_offset].dup
  				else
 -					@input_buffer = ""
 +					@input_buffer = []
  				end
-@@ -2103,3 +2115,6 @@ class App
- 				@input_offset = [@input_buffer.length, @input_offset + 1].min
+ 				draw_input
+ 			when :BACKSPACE
+@@ -2219,20 +2236,35 @@ class App
+ 					redraw
+ 				end
+ 			when :ARROW_LEFT
+-				old_offset = @input_offset.dup
+-				@input_offset = [@input_buffer.length, @input_offset + 1].min
 -				print("\033[1D") if (old_offset != @input_offset)
++				old_offset = @input_offset
++				@input_offset = [@input_buffer.size, @input_offset + 1].min
 +				if old_offset != @input_offset then
 +					console_offset = Unicode::width(@input_buffer[-@input_offset], true)
 +					print("\033[#{console_offset}D")
 +				end
  			when :ARROW_RIGHT
-@@ -2107,3 +2122,6 @@ class App
- 				@input_offset = [0, @input_offset - 1].max
+-				old_offset = @input_offset.dup
+-				@input_offset = [0, @input_offset - 1].max
 -				print("\033[1C") if (old_offset != @input_offset)
++				old_offset = @input_offset
++				@input_offset = [0, @input_offset - 1].max
 +				if old_offset != @input_offset then
 +					console_offset = Unicode::width(@input_buffer[-@input_offset-1], true)
 +					print("\033[#{console_offset}C")
 +				end
  			end
-@@ -2112,5 +2130,11 @@ class App
- 		@input.on_append = lambda { |x|
--			@input_buffer.insert(@input_buffer.length - @input_offset, x)
+ 		}
+ 
+-		@input.on_append = -> (cmd) {
+-			@input_buffer.insert(@input_buffer.length - @input_offset, cmd)
 -			@history_offset = 0
 -			draw_input
-+			@symbol_buffer += x
++		@input.on_append = -> (x) {
++			@symbol_buffer << x
 +			dup = @symbol_buffer.dup.force_encoding("UTF-8")
-+			if Unicode::width(dup) > 0 then
-+				@input_buffer.insert(@input_buffer.length - @input_offset, dup)
++
++			if Unicode::width(dup, true) > 0 then
++				@input_buffer.insert(@input_buffer.size - @input_offset, dup)
 +				@symbol_buffer = ""
 +				# Update input field
 +				@history_offset = 0
 +				draw_input
++			else
++				STDERR.puts "no input"
 +			end
  		}
+ 	end
+ 
