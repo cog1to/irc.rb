@@ -1,5 +1,5 @@
 diff --git a/irc.rb b/irc.rb
-index e5cc42b..dc65909 100755
+index df74a71..b261ba8 100755
 --- a/irc.rb
 +++ b/irc.rb
 @@ -3,6 +3,7 @@
@@ -8,9 +8,9 @@ index e5cc42b..dc65909 100755
  require 'optparse'
 +require "openssl"
  
- ###############################################################################
- # Styling
-@@ -175,6 +176,7 @@ SETTINGS = {
+ ###########
+ # Styling #
+@@ -178,6 +179,7 @@ SETTINGS = {
  options = {
  	:port => 6667,
  	:server => "irc.rizon.net",
@@ -18,7 +18,7 @@ index e5cc42b..dc65909 100755
  }
  
  OptionParser.new do |opt|
-@@ -190,6 +192,9 @@ OptionParser.new do |opt|
+@@ -193,6 +195,9 @@ OptionParser.new do |opt|
  	opt.on("-s", "--pass PASS") { |o|
  		options[:pass] = o
  	}
@@ -28,8 +28,8 @@ index e5cc42b..dc65909 100755
  	opt.on("-h", "--help") {
  		puts opt
  		exit
-@@ -211,10 +216,11 @@ end
- # messages as string.
+@@ -215,10 +220,11 @@ end
+ #####################################################################
  
  class IRC
 -	def initialize(addr, port)
@@ -41,7 +41,7 @@ index e5cc42b..dc65909 100755
  		@callback = nil
  		@err = nil
  	end
-@@ -229,7 +235,12 @@ class IRC
+@@ -233,7 +239,12 @@ class IRC
  
  	def open()
  		@buffer = ""
@@ -55,7 +55,7 @@ index e5cc42b..dc65909 100755
  		listen()
  	end
  
-@@ -238,7 +249,11 @@ class IRC
+@@ -242,7 +253,11 @@ class IRC
  			while @socket do
  				begin
  					IO.select([@socket])
@@ -68,7 +68,7 @@ index e5cc42b..dc65909 100755
  
  					# Parse any full messages
  					if @callback then
-@@ -265,7 +280,14 @@ class IRC
+@@ -269,7 +284,14 @@ class IRC
  	def send(msg)
  		if @socket then
  			begin
@@ -78,13 +78,13 @@ index e5cc42b..dc65909 100755
 +				else
 +					@socket.send(msg + "\r\n", 0)
 +				end
-+ 			rescue => ex
-+ 				@err.call(ex) if @err
-+ 				close()
++			rescue => ex
++				@err.call(ex) if @err
++				close()
  			rescue => ex
  				@err.call(ex) if @err
  				close()
-@@ -275,7 +297,11 @@ class IRC
+@@ -279,7 +301,11 @@ class IRC
  
  	def close()
  		if @socket then
@@ -97,7 +97,7 @@ index e5cc42b..dc65909 100755
  			@socket = nil
  		end
  	end
-@@ -769,11 +795,12 @@ end
+@@ -981,11 +1007,12 @@ end
  class Client
  	attr_reader :host, :user, :state
  
@@ -111,7 +111,7 @@ index e5cc42b..dc65909 100755
  		@state = :closed
  		@queue = Queue.new
  		@read_fd, @write_fd = IO.pipe
-@@ -806,7 +833,7 @@ class Client
+@@ -1018,7 +1045,7 @@ class Client
  
  		@state = :connecting
  		begin
@@ -120,7 +120,7 @@ index e5cc42b..dc65909 100755
  			@irc.on_message { |msg| handle_message(msg) }
  			@irc.on_error { |err| handle_error(err) }
  			@irc.open()
-@@ -2169,7 +2196,13 @@ begin
+@@ -2400,7 +2427,13 @@ begin
  	STDOUT.puts "\033[?1049h"
  
  	# Setup
