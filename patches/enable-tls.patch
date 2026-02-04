@@ -1,5 +1,5 @@
 diff --git a/irc.rb b/irc.rb
-index df74a71..b261ba8 100755
+index aa75d6f..0400ae3 100755
 --- a/irc.rb
 +++ b/irc.rb
 @@ -3,6 +3,7 @@
@@ -97,7 +97,7 @@ index df74a71..b261ba8 100755
  			@socket = nil
  		end
  	end
-@@ -981,11 +1007,12 @@ end
+@@ -845,11 +871,12 @@ end
  class Client
  	attr_reader :host, :user, :state
  
@@ -111,7 +111,7 @@ index df74a71..b261ba8 100755
  		@state = :closed
  		@queue = Queue.new
  		@read_fd, @write_fd = IO.pipe
-@@ -1018,7 +1045,7 @@ class Client
+@@ -882,7 +909,7 @@ class Client
  
  		@state = :connecting
  		begin
@@ -120,7 +120,7 @@ index df74a71..b261ba8 100755
  			@irc.on_message { |msg| handle_message(msg) }
  			@irc.on_error { |err| handle_error(err) }
  			@irc.open()
-@@ -2400,7 +2427,13 @@ begin
+@@ -2264,7 +2291,13 @@ begin
  	STDOUT.puts "\033[?1049h"
  
  	# Setup

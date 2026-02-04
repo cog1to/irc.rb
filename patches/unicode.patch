@@ -1,5 +1,5 @@
 diff --git a/irc.rb b/irc.rb
-index aa75d6f..a6f5673 100755
+index aa75d6f..8ebdd16 100755
 --- a/irc.rb
 +++ b/irc.rb
 @@ -3,6 +3,7 @@
@@ -161,10 +161,9 @@ index aa75d6f..a6f5673 100755
 +				end
  			when :ARROW_RIGHT
 -				old_offset = @input_offset.dup
--				@input_offset = [0, @input_offset - 1].max
--				print("\033[1C") if (old_offset != @input_offset)
 +				old_offset = @input_offset
-+				@input_offset = [0, @input_offset - 1].max
+ 				@input_offset = [0, @input_offset - 1].max
+-				print("\033[1C") if (old_offset != @input_offset)
 +				if old_offset != @input_offset then
 +					console_offset = Unicode::width(@input_buffer[-@input_offset-1], true)
 +					print("\033[#{console_offset}C")
