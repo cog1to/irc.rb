@@ -1,5 +1,5 @@
 diff --git a/irc.rb b/irc.rb
-index aa75d6f..8ebdd16 100755
+index aa75d6f..7bebe62 100755
 --- a/irc.rb
 +++ b/irc.rb
 @@ -3,6 +3,7 @@
@@ -91,13 +91,12 @@ index aa75d6f..8ebdd16 100755
  
  		# Get current size.
  		size = (`stty size`).split(" ").map { |x| Integer(x) }
-@@ -1907,12 +1912,24 @@ class App
+@@ -1907,12 +1912,23 @@ class App
  
  		# Draw current content.
  		content = @history_offset < 0 ? @history[@history_offset] : @input_buffer
 -		line = content[([0, content.length - @size[:cols] + 4].max)..-1]
 -		print("\033[#{@size[:lines]};1H>> #{line}\033[0K")
-+		STDERR.puts "content: #{content.join}"
 +		# Get how much symbols we can fit
 +		max_width = @size[:cols] - 4
 +		line, offset = [], -1
@@ -119,7 +118,7 @@ index aa75d6f..8ebdd16 100755
  		end
  	end
  
-@@ -2144,7 +2161,7 @@ class App
+@@ -2144,7 +2160,7 @@ class App
  			@history_offset = 0
  
  			# Reset buffer and send
@@ -128,7 +127,7 @@ index aa75d6f..8ebdd16 100755
  			parse_and_send(text)
  
  			# Redraw the input
-@@ -2159,7 +2176,7 @@ class App
+@@ -2159,7 +2175,7 @@ class App
  				if @history_offset < 0 then
  					@input_buffer = @history[@history_offset].dup
  				else
@@ -137,7 +136,7 @@ index aa75d6f..8ebdd16 100755
  				end
  				draw_input
  			when :ARROW_DOWN
-@@ -2168,7 +2185,7 @@ class App
+@@ -2168,7 +2184,7 @@ class App
  				if @history_offset < 0 then
  					@input_buffer = @history[@history_offset].dup
  				else
@@ -146,7 +145,7 @@ index aa75d6f..8ebdd16 100755
  				end
  				draw_input
  			when :BACKSPACE
-@@ -2219,20 +2236,35 @@ class App
+@@ -2219,20 +2235,33 @@ class App
  					redraw
  				end
  			when :ARROW_LEFT
@@ -185,8 +184,6 @@ index aa75d6f..8ebdd16 100755
 +				# Update input field
 +				@history_offset = 0
 +				draw_input
-+			else
-+				STDERR.puts "no input"
 +			end
  		}
  	end
